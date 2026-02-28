@@ -56,7 +56,7 @@ DAYS_BACK = 14
 MAX_PER_QUERY = 8
 
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
-GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent'
+GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
 
 def fetch_papers(query):
     cutoff = (datetime.now() - timedelta(days=DAYS_BACK)).year
