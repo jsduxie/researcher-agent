@@ -8,10 +8,6 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from textwrap import dedent
 
-import dominate
-from dominate import tags
-from dominate.util import raw
-
 SEARCH_QUERIES = [
     'Borderline Personality Disorder detection social media',
     'BPD natural language processing Reddit',
@@ -179,68 +175,71 @@ def _score_chunk(papers):
     return enriched
 
 S = {
-    'body': 'max-width:680px; margin:auto; padding:24px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d1117; color:#e6edf3;',
-    'banner': 'border-bottom:1px solid #30363d; padding-bottom:20px; margin-bottom:24px;',
-    'banner_h1': 'margin:0 0 4px 0; font-size:20px; font-weight:600; color:#e6edf3; letter-spacing:-0.3px;',
-    'banner_sub': 'margin:0; font-size:13px; color:#7d8590;',
-    'intro': 'font-size:13px; color:#7d8590; margin-bottom:24px;',
-    'footer': 'font-size:12px; color:#484f58; text-align:center;',
-    'hr': 'border:none; border-top:1px solid #21262d; margin:24px 0;',
-    'card': 'border:1px solid #30363d; border-radius:6px; padding:16px; margin-bottom:16px; background:#161b22;',
-    'card_header': 'display:flex; justify-content:space-between; align-items:flex-start; gap:12px;',
-    'card_title': 'margin:0; font-size:15px; font-weight:600; color:#e6edf3; flex:1; line-height:1.4;',
-    'card_meta': 'margin:6px 0 0 0; font-size:12px; color:#7d8590;',
-    'card_body': 'margin:12px 0 10px 0; padding:12px; background:#0d1117; border-radius:4px; border:1px solid #21262d;',
-    'card_text': 'margin:0 0 8px 0; font-size:13px; color:#c9d1d9; line-height:1.6;',
-    'card_text_last': 'margin:0; font-size:13px; color:#c9d1d9; line-height:1.6;',
-    'card_reason': 'margin:0 0 10px 0; font-size:12px; color:#484f58;',
-    'card_footer': 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;',
-    'badge': 'background:#21262d; border:1px solid #30363d; padding:2px 8px; border-radius:4px; font-size:12px; color:#7d8590;',
-    'link': 'color:#58a6ff; text-decoration:none;',
-    'links': 'font-size:12px;',
-    'score_badge': 'padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; color:#0d1117;',
+    'wrapper': 'max-width:640px; margin:0 auto; padding:32px 16px; font-family:Roboto,system-ui,-apple-system,sans-serif; background:#f0f4f8; color:#1e293b;',
+
+    'header': 'background:#1e3a5f; border-radius:12px 12px 0 0; padding:32px 28px 24px 28px;',
+    'header_label': 'font-size:11px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase; color:#93c5fd; margin:0 0 8px 0;',
+    'header_title': 'font-size:22px; font-weight:700; color:#ffffff; line-height:1.3; margin:0;',
+    'header_count_box': 'background:rgba(255,255,255,0.15); border-radius:8px; padding:10px 14px; display:inline-block; text-align:center;',
+    'header_count_num': 'font-size:22px; font-weight:700; color:#ffffff; line-height:1;',
+    'header_count_label': 'font-size:10px; color:#93c5fd; text-transform:uppercase; letter-spacing:0.5px; margin-top:2px;',
+
+    'subheader': 'background:#ffffff; border-left:1px solid #e2e8f0; border-right:1px solid #e2e8f0; padding:16px 28px; border-bottom:1px solid #e2e8f0;',
+    'subheader_text': 'font-size:12px; color:#64748b; margin:0;',
+
+    'card': 'background:#ffffff; border-left:1px solid #e2e8f0; border-right:1px solid #e2e8f0; padding:24px 28px; border-bottom:1px solid #e2e8f0;',
+    'card_last': 'background:#ffffff; border-left:1px solid #e2e8f0; border-right:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; border-radius:0 0 12px 12px; padding:24px 28px;',
+    'score_badge': 'color:#ffffff; font-size:13px; font-weight:700; text-align:center; border-radius:8px; padding:6px 0; width:40px;',
+    'card_title': 'font-size:15px; font-weight:600; color:#0f172a; line-height:1.45; margin:0;',
+    'card_meta': 'font-size:12px; color:#94a3b8; margin-top:5px;',
+
+    'summary_box': 'background:#f8fafc; border-radius:8px; padding:14px 16px; margin-top:14px; border:1px solid #e2e8f0;',
+    'summary_text': 'font-size:13px; color:#334155; line-height:1.65; margin:0;',
+    'summary_text_mt': 'font-size:13px; color:#334155; line-height:1.65; margin:10px 0 0 0;',
+    'summary_label': 'font-weight:600; color:#1e3a5f;',
+
+    'reason': 'font-size:12px; color:#94a3b8; margin:10px 0 0 0; font-style:italic;',
+
+    'link_pill': 'display:inline-block; font-size:12px; font-weight:500; color:#2563eb; text-decoration:none; padding:4px 10px; border:1px solid #bfdbfe; border-radius:6px; margin-right:6px; margin-top:4px;',
+    'links_row': 'margin-top:12px;',
+
+    'footer': 'text-align:center; padding:20px 0 8px 0;',
+    'footer_text': 'font-size:11px; color:#94a3b8;',
+
+    'empty': 'background:#ffffff; border:1px solid #e2e8f0; border-radius:0 0 12px 12px; padding:40px 28px; text-align:center; color:#94a3b8; font-size:14px;',
 }
 
-SCORE_COLOURS = {9: '#3fb950', 7: '#58a6ff', 0: '#d29922'}
-
-SCORE_COLOURS = {9: '#22c55e', 7: '#3b82f6', 0: '#f59e0b'}
+SCORE_COLOURS = {9: '#059669', 7: '#2563eb', 0: '#64748b'}
 
 
 def score_colour(score):
     if not isinstance(score, int):
-        return '#888888'
+        return '#94a3b8'
     for threshold, colour in sorted(SCORE_COLOURS.items(), reverse=True):
         if score >= threshold:
             return colour
-    return '#888888'
+    return '#94a3b8'
 
 
-def paper_links_tag(paper):
+def paper_links_html(paper):
     url = paper.get('url', '')
     doi = (paper.get('externalIds') or {}).get('DOI')
     pdf = (paper.get('openAccessPdf') or {}).get('url', '')
 
-    parts = []
+    links = []
     if url:
-        parts.append(tags.a('Semantic Scholar', href=url, style=S['link']))
+        links.append(f'<a href="{url}" style="{S["link_pill"]}">Semantic Scholar</a>')
     if doi:
-        parts.append(tags.a('DOI', href=f'https://doi.org/{doi}', style=S['link']))
+        links.append(f'<a href="https://doi.org/{doi}" style="{S["link_pill"]}">DOI</a>')
     if pdf:
-        parts.append(tags.a('PDF', href=pdf, style=S['link']))
+        links.append(f'<a href="{pdf}" style="{S["link_pill"]}">PDF</a>')
 
-    container = tags.span(style=S['links'])
-    for i, link in enumerate(parts):
-        container += link
-        if i < len(parts) - 1:
-            container += raw(' &middot; ')
-
-    if not parts:
-        container += 'No link'
-
-    return container
+    if not links:
+        return ''
+    return f'<div style="{S["links_row"]}">{"".join(links)}</div>'
 
 
-def paper_card(paper):
+def paper_card_html(paper, is_last=False):
     title = paper.get('title', 'No title')
     authors = ', '.join(a['name'] for a in (paper.get('authors') or [])[:3])
     if len(paper.get('authors') or []) > 3:
@@ -249,67 +248,80 @@ def paper_card(paper):
     citations = paper.get('citationCount', 0)
     score = paper.get('ai_score', 'N/A')
     colour = score_colour(score)
+    score_display = score if isinstance(score, int) else '?'
 
-    card_style = S['card'] + f'border-left:4px solid {colour};'
-    badge_style = S['score_badge'] + f'background:{colour};'
+    card_style = S['card_last'] if is_last else S['card']
+    badge_style = f'{S["score_badge"]} background:{colour};'
 
-    card = tags.div(style=card_style)
+    summary = paper.get('ai_summary', '')
+    contribution = paper.get('ai_contribution', '')
+    reason = paper.get('ai_reason', '')
+    links = paper_links_html(paper)
 
-    with card:
-        with tags.div(style=S['card_header']):
-            tags.h3(title, style=S['card_title'])
-            tags.span(f'{score}/10', style=badge_style)
-
-        tags.p(f'{authors} · {pub_date}', style=S['card_meta'])
-
-        with tags.div(style=S['card_body']):
-            with tags.p(style=S['card_text']):
-                tags.strong('Summary: ')
-                raw(paper.get('ai_summary', ''))
-            with tags.p(style=S['card_text_last']):
-                tags.strong('Key takeaway: ')
-                raw(paper.get('ai_contribution', ''))
-
-        tags.p(f'Relevance: {paper.get("ai_reason", "")}', style=S['card_reason'])
-
-        with tags.div(style=S['card_footer']):
-            tags.span(f'{citations} citations', style=S['badge'])
-            paper_links_tag(paper)
-
-    return card
+    return f'''<div style="{card_style}">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+    <td style="width:40px; vertical-align:top; padding-right:14px;">
+      <div style="{badge_style}">{score_display}</div>
+    </td>
+    <td style="vertical-align:top;">
+      <div style="{S['card_title']}">{title}</div>
+      <div style="{S['card_meta']}">{authors} &nbsp;&middot;&nbsp; {pub_date} &nbsp;&middot;&nbsp; {citations} citations</div>
+    </td>
+  </tr></table>
+  <div style="{S['summary_box']}">
+    <div style="{S['summary_text']}"><span style="{S['summary_label']}">Summary</span> &mdash; {summary}</div>
+    <div style="{S['summary_text_mt']}"><span style="{S['summary_label']}">Key takeaway</span> &mdash; {contribution}</div>
+  </div>
+  <div style="{S['reason']}">{reason}</div>
+  {links}
+</div>'''
 
 
 def build_email(papers):
     today = datetime.now().strftime('%B %d, %Y')
+    count = len(papers)
 
-    doc = dominate.document(title='Research Digest')
+    cards_html = ''
+    if papers:
+        for i, p in enumerate(papers):
+            cards_html += paper_card_html(p, is_last=(i == len(papers) - 1))
+    else:
+        cards_html = f'<div style="{S["empty"]}">No relevant papers found this period.</div>'
 
-    with doc:
-        with tags.body(style=S['body']):
-            with tags.div(style=S['banner']):
-                tags.h1('Research Digest', style=S['banner_h1'])
-                tags.p(
-                    raw(f'{today} &nbsp;&middot;&nbsp; {len(papers)} paper(s)'),
-                    style=S['banner_sub'],
-                )
+    return f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Research Digest</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body style="margin:0; padding:0; background:#f0f4f8;">
+<div style="{S['wrapper']}">
 
-            tags.p(
-                f'Papers scored 1-10 for relevance to your BPD detection / mental health NLP '
-                f'research and filtered to >={RELEVANCE_THRESHOLD}/10. '
-                f'Summaries generated by Gemini 1.5 Flash.',
-                style=S['intro'],
-            )
+  <div style="{S['header']}">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td>
+        <div style="{S['header_label']}">Research Digest</div>
+        <div style="{S['header_title']}">BPD Detection &amp; Mental Health NLP</div>
+      </td>
+      <td style="text-align:right; vertical-align:top;">
+        <div style="{S['header_count_box']}">
+          <div style="{S['header_count_num']}">{count}</div>
+          <div style="{S['header_count_label']}">papers</div>
+        </div>
+      </td>
+    </tr></table>
+  </div>
 
-            if papers:
-                for p in papers:
-                    paper_card(p)
-            else:
-                tags.p('No relevant papers found this period.', style='color:#888;')
+  <div style="{S['subheader']}">
+    <p style="{S['subheader_text']}">{today} &nbsp;&middot;&nbsp; Scored &amp; filtered &ge;{RELEVANCE_THRESHOLD}/10 &nbsp;&middot;&nbsp; Summaries by Gemini 2.5 Flash</p>
+  </div>
 
-            tags.hr(style=S['hr'])
-            tags.p(raw('Semantic Scholar &middot; Gemini 2.0 Flash &middot; GitHub Actions'), style=S['footer'])
+  {cards_html}
 
-    return str(doc)
+  <div style="{S['footer']}">
+    <span style="{S['footer_text']}">Semantic Scholar &nbsp;&middot;&nbsp; Gemini 2.5 Flash &nbsp;&middot;&nbsp; GitHub Actions</span>
+  </div>
+
+</div>
+</body></html>'''
 
 def send_email(html, paper_count):
     msg = MIMEMultipart('alternative')
