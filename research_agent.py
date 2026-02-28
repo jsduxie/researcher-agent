@@ -2,6 +2,7 @@ import requests
 import smtplib
 import os
 import json
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
@@ -67,6 +68,7 @@ def fetch_papers(query):
         'publicationDateOrYear': f'{cutoff}-',
     }
     try:
+        time.sleep(1.5)
         r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=15)
         r.raise_for_status()
         return r.json().get('data', [])
