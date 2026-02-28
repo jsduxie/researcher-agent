@@ -3,7 +3,7 @@ name: Daily Research Digest
 on:
   schedule:
     - cron: '0 8 * * *'
-  workflow-dispatch:
+  workflow_dispatch:  
 
 jobs:
   send-digest:
