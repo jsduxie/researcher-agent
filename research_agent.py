@@ -79,12 +79,8 @@ def fetch_papers(query):
 def gemini(prompt):
     headers = {'Content-Type': 'application/json'}
     body = {'contents': [{'parts': [{'text': prompt}]}]}
-    r = requests.post(
-        f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}',
-        headers=headers,
-        json=body,
-        timeout=30,
-    )
+    time.sleep(4)
+    r = requests.post(f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}', headers=headers, json=body, timeout=30)
     r.raise_for_status()
     return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
 
