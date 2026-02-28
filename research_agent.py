@@ -68,7 +68,7 @@ def fetch_papers(query):
         'publicationDateOrYear': f'{cutoff}-',
     }
     try:
-        time.sleep(1.5)
+        time.sleep(5)
         r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=15)
         r.raise_for_status()
         return r.json().get('data', [])
@@ -76,13 +76,27 @@ def fetch_papers(query):
         print(f'Error fetching "{query}": {e}')
         return []
 
-def gemini(prompt):
+def gemini(prompt, retries=3):
     headers = {'Content-Type': 'application/json'}
     body = {'contents': [{'parts': [{'text': prompt}]}]}
-    time.sleep(4)
-    r = requests.post(f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}', headers=headers, json=body, timeout=30)
-    r.raise_for_status()
-    return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    
+    for attempt in range(retries):
+        time.sleep(5)
+        r = requests.post(
+            f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}',
+            headers=headers,
+            json=body,
+            timeout=30,
+        )
+        if r.status_code == 429:
+            wait = 15 * (attempt + 1)
+            print(f'Gemini rate limited, waiting {wait}s')
+            time.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    
+    raise Exception('Gemini failed after retries')
 
 
 def score_and_summarise(paper):
@@ -133,27 +147,29 @@ def score_and_summarise(paper):
         return paper
 
 S = {
-    'body': 'max-width:720px; margin:auto; padding:24px; font-family:-apple-system,sans-serif; color:#1e293b;',
-    'banner': 'background:linear-gradient(135deg,#4f63d2,#6b3fa0); padding:24px; border-radius:12px; margin-bottom:24px;',
-    'banner_h1': 'margin:0; color:white; font-size:22px;',
-    'banner_sub': 'margin:6px 0 0 0; color:rgba(255,255,255,0.85);',
-    'intro': 'color:#64748b; font-size:14px; margin-bottom:20px;',
-    'footer': 'color:#94a3b8; font-size:12px; text-align:center;',
-    'hr': 'border:none; border-top:1px solid #e2e8f0; margin:24px 0;',
-    'card': 'border:1px solid #e2e8f0; border-radius:8px; padding:18px; margin-bottom:20px; background:#fafafa;',
-    'card_header': 'display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;',
-    'card_title': 'margin:0; color:#1e293b; font-size:16px; flex:1;',
-    'card_meta': 'margin:6px 0 0 0; color:#64748b; font-size:13px;',
-    'card_body': 'margin:12px 0 8px 0; padding:12px; background:white; border-radius:6px; border:1px solid #e2e8f0;',
-    'card_text': 'margin:0 0 8px 0; font-size:14px; color:#334155;',
-    'card_text_last': 'margin:0; font-size:14px; color:#334155;',
-    'card_reason': 'margin:0 0 10px 0; font-size:12px; color:#94a3b8; font-style:italic;',
-    'card_footer': 'display:flex; gap:12px; align-items:center; flex-wrap:wrap;',
-    'badge': 'background:#f1f5f9; padding:3px 10px; border-radius:12px; font-size:13px;',
-    'link': 'color:#3b82f6;',
-    'links': 'font-size:13px;',
-    'score_badge': 'color:white; padding:3px 10px; border-radius:12px; font-size:13px; font-weight:bold; white-space:nowrap;',
+    'body': 'max-width:680px; margin:auto; padding:24px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d1117; color:#e6edf3;',
+    'banner': 'border-bottom:1px solid #30363d; padding-bottom:20px; margin-bottom:24px;',
+    'banner_h1': 'margin:0 0 4px 0; font-size:20px; font-weight:600; color:#e6edf3; letter-spacing:-0.3px;',
+    'banner_sub': 'margin:0; font-size:13px; color:#7d8590;',
+    'intro': 'font-size:13px; color:#7d8590; margin-bottom:24px;',
+    'footer': 'font-size:12px; color:#484f58; text-align:center;',
+    'hr': 'border:none; border-top:1px solid #21262d; margin:24px 0;',
+    'card': 'border:1px solid #30363d; border-radius:6px; padding:16px; margin-bottom:16px; background:#161b22;',
+    'card_header': 'display:flex; justify-content:space-between; align-items:flex-start; gap:12px;',
+    'card_title': 'margin:0; font-size:15px; font-weight:600; color:#e6edf3; flex:1; line-height:1.4;',
+    'card_meta': 'margin:6px 0 0 0; font-size:12px; color:#7d8590;',
+    'card_body': 'margin:12px 0 10px 0; padding:12px; background:#0d1117; border-radius:4px; border:1px solid #21262d;',
+    'card_text': 'margin:0 0 8px 0; font-size:13px; color:#c9d1d9; line-height:1.6;',
+    'card_text_last': 'margin:0; font-size:13px; color:#c9d1d9; line-height:1.6;',
+    'card_reason': 'margin:0 0 10px 0; font-size:12px; color:#484f58;',
+    'card_footer': 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;',
+    'badge': 'background:#21262d; border:1px solid #30363d; padding:2px 8px; border-radius:4px; font-size:12px; color:#7d8590;',
+    'link': 'color:#58a6ff; text-decoration:none;',
+    'links': 'font-size:12px;',
+    'score_badge': 'padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; color:#0d1117;',
 }
+
+SCORE_COLOURS = {9: '#3fb950', 7: '#58a6ff', 0: '#d29922'}
 
 SCORE_COLOURS = {9: '#22c55e', 7: '#3b82f6', 0: '#f59e0b'}
 
@@ -241,7 +257,7 @@ def build_email(papers):
             with tags.div(style=S['banner']):
                 tags.h1('Research Digest', style=S['banner_h1'])
                 tags.p(
-                    f'{today} · {len(papers)} relevant paper(s) found',
+                    raw(f'{today} &nbsp;&middot;&nbsp; {len(papers)} paper(s)'),
                     style=S['banner_sub'],
                 )
 
@@ -259,7 +275,7 @@ def build_email(papers):
                 tags.p('No relevant papers found this period.', style='color:#888;')
 
             tags.hr(style=S['hr'])
-            tags.p('Semantic Scholar &middot; Gemini 1.5 Flash &middot; GitHub Actions', style=S['footer'])
+            tags.p(raw('Semantic Scholar &middot; Gemini 2.0 Flash &middot; GitHub Actions'), style=S['footer'])
 
     return str(doc)
 
