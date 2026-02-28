@@ -55,6 +55,7 @@ RESEARCH_CONTEXT = dedent('''
 RELEVANCE_THRESHOLD = 6
 DAYS_BACK = 14
 MAX_PER_QUERY = 8
+BATCH_SIZE = 10
 
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
@@ -86,7 +87,7 @@ def gemini(prompt, retries=3):
             f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}',
             headers=headers,
             json=body,
-            timeout=30,
+            timeout=120,
         )
         if r.status_code == 429:
             wait = 15 * (attempt + 1)
@@ -98,8 +99,19 @@ def gemini(prompt, retries=3):
     
     raise Exception('Gemini failed after retries')
 
-
 def score_and_summarise(papers):
+    if not papers:
+        return []
+
+    enriched = []
+    for chunk_start in range(0, len(papers), BATCH_SIZE):
+        chunk = papers[chunk_start:chunk_start + BATCH_SIZE]
+        print(f'Scoring batch {chunk_start // BATCH_SIZE + 1} ({len(chunk)} papers)...')
+        enriched.extend(_score_chunk(chunk))
+
+    return enriched
+
+def _score_chunk(papers):
     if not papers:
         return []
 
