@@ -57,7 +57,7 @@ DAYS_BACK = 14
 MAX_PER_QUERY = 8
 
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
-GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent'
 
 def fetch_papers(query):
     cutoff = (datetime.now() - timedelta(days=DAYS_BACK)).year
@@ -128,14 +128,14 @@ def score_and_summarise(paper):
         data = json.loads(response)
 
         if data.get('relevance_score', 0) < RELEVANCE_THRESHOLD:
-            print(f'  Dropped (score {data["relevance_score"]}/10): {title[:60]}')
+            print(f'Dropped (score {data["relevance_score"]}/10): {title[:60]}')
             return None
 
         paper['ai_score'] = data['relevance_score']
         paper['ai_reason'] = data['relevance_reason']
         paper['ai_summary'] = data['summary']
         paper['ai_contribution'] = data['key_contribution']
-        print(f'  Kept    (score {data["relevance_score"]}/10): {title[:60]}')
+        print(f'Kept (score {data["relevance_score"]}/10): {title[:60]}')
         return paper
 
     except Exception as e:
@@ -144,7 +144,7 @@ def score_and_summarise(paper):
         paper['ai_reason'] = 'N/A'
         paper['ai_summary'] = 'Could not generate summary.'
         paper['ai_contribution'] = 'Could not generate contribution.'
-        return paper
+        return None
 
 S = {
     'body': 'max-width:680px; margin:auto; padding:24px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d1117; color:#e6edf3;',
