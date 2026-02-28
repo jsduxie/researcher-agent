@@ -68,7 +68,7 @@ def fetch_papers(query):
         'publicationDateOrYear': f'{cutoff}-',
     }
     try:
-        time.sleep(5)
+        time.sleep(2)
         r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=15)
         r.raise_for_status()
         return r.json().get('data', [])
@@ -99,52 +99,72 @@ def gemini(prompt, retries=3):
     raise Exception('Gemini failed after retries')
 
 
-def score_and_summarise(paper):
-    title = paper.get('title', '')
-    abstract = paper.get('abstract') or 'No abstract available.'
+def score_and_summarise(papers):
+    if not papers:
+        return []
+
+    paper_entries = []
+    for i, p in enumerate(papers):
+        title = p.get('title', '')
+        abstract = p.get('abstract') or 'No abstract available.'
+        paper_entries.append(f'[{i}] Title: {title}\nAbstract: {abstract}')
+
+    papers_block = '\n\n'.join(paper_entries)
 
     prompt = dedent(f'''
-        You are a research assistant helping a PhD student assess papers.
+        You are a research assistant helping a masters student assess papers.
 
         RESEARCH CONTEXT:
         {RESEARCH_CONTEXT}
 
-        PAPER:
-        Title: {title}
-        Abstract: {abstract}
+        PAPERS:
+        {papers_block}
 
-        Respond in this exact JSON format (no markdown, no extra text):
+        For EACH paper, assess its relevance to the student's research.
+        Respond with a JSON array (no markdown, no extra text) where each element has:
         {{
+          "index": <integer matching the [i] label>,
           "relevance_score": <integer 1-10>,
           "relevance_reason": "<one sentence on why it is or is not relevant>",
-          "summary": "<2-3 sentences summarising the paper from the angle of the student's research — what method/finding is useful and why>",
+          "summary": "<2-3 sentences summarising the paper from the angle of the student's research>",
           "key_contribution": "<the single most important takeaway for this student>"
         }}
+
+        Return ONLY the JSON array.
     ''')
 
     try:
         response = gemini(prompt)
         response = response.replace('```json', '').replace('```', '').strip()
-        data = json.loads(response)
+        results = json.loads(response)
+    except Exception as e:
+        print(f'Batch Gemini error: {e}')
+        return []
 
-        if data.get('relevance_score', 0) < RELEVANCE_THRESHOLD:
-            print(f'Dropped (score {data["relevance_score"]}/10): {title[:60]}')
-            return None
+    enriched = []
+    results_by_index = {r['index']: r for r in results}
 
-        paper['ai_score'] = data['relevance_score']
+    for i, paper in enumerate(papers):
+        title = paper.get('title', '')[:60]
+        data = results_by_index.get(i)
+
+        if data is None:
+            print(f'Missing result for [{i}]: {title}')
+            continue
+
+        score = data.get('relevance_score', 0)
+        if score < RELEVANCE_THRESHOLD:
+            print(f' Dropped (score {score}/10): {title}')
+            continue
+
+        paper['ai_score'] = score
         paper['ai_reason'] = data['relevance_reason']
         paper['ai_summary'] = data['summary']
         paper['ai_contribution'] = data['key_contribution']
-        print(f'Kept (score {data["relevance_score"]}/10): {title[:60]}')
-        return paper
+        print(f'Kept (score {score}/10): {title}')
+        enriched.append(paper)
 
-    except Exception as e:
-        print(f'  Gemini error for "{title[:40]}": {e}')
-        paper['ai_score'] = 'N/A'
-        paper['ai_reason'] = 'N/A'
-        paper['ai_summary'] = 'Could not generate summary.'
-        paper['ai_contribution'] = 'Could not generate contribution.'
-        return None
+    return enriched
 
 S = {
     'body': 'max-width:680px; margin:auto; padding:24px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d1117; color:#e6edf3;',
@@ -308,7 +328,7 @@ def main():
 
     print(f'{len(unique)} unique papers found. Scoring\n')
 
-    enriched = [r for p in unique if (r := score_and_summarise(p)) is not None]
+    enriched = score_and_summarise(unique)
     enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 
     print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
