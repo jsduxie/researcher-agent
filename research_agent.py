@@ -133,7 +133,7 @@ def score_and_summarise(paper):
         paper['ai_summary'] = 'Could not generate summary.'
         paper['ai_contribution'] = 'Could not generate contribution.'
         return paper
-s
+
 S = {
     'body': 'max-width:720px; margin:auto; padding:24px; font-family:-apple-system,sans-serif; color:#1e293b;',
     'banner': 'background:linear-gradient(135deg,#4f63d2,#6b3fa0); padding:24px; border-radius:12px; margin-bottom:24px;',
