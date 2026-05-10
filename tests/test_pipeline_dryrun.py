@@ -5,7 +5,7 @@ def test_dry_run_uses_fixtures_and_makes_no_network_calls(mocker, capsys):
 	mocker.patch.object(research_agent, 'DRY_RUN', False)
 	mock_get = mocker.patch('fetcher.requests.get')
 	mock_post = mocker.patch('scorer.requests.post')
-	mock_smtp = mocker.patch('research_agent.smtplib.SMTP_SSL')
+	mock_smtp = mocker.patch('emailer.smtplib.SMTP_SSL')
 
 	research_agent.main(['--dry-run'])
 
