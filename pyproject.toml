@@ -23,3 +23,7 @@ split-on-trailing-comma = false
 
 [tool.ruff.lint.pylint]
 max-args = 5
+
+[tool.pytest.ini_options]
+pythonpath = ['.']
+testpaths = ['tests']
