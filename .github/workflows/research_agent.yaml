@@ -11,6 +11,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Job-level env so `if: env.DATABASE_URL_TEST != ''` can gate the integration
+    # step. Fork PRs receive '' for missing secrets, which would otherwise cause
+    # db.connect('') to fail instead of cleanly skipping.
+    env:
+      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,9 +38,7 @@ jobs:
         run: pytest -m 'not integration'
 
       - name: Integration tests
-        if: always()
-        env:
-          DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
+        if: always() && env.DATABASE_URL_TEST != ''
         run: pytest -m integration
 
   send-digest:

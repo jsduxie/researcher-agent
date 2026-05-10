@@ -6,10 +6,13 @@ import db
 
 _DATABASE_URL_TEST = os.environ.get('DATABASE_URL_TEST')
 
+# `not _DATABASE_URL_TEST` covers both None and empty string. GitHub Actions sets
+# missing secrets to '' (notably on pull_request runs from forks), so an `is None`
+# check would let the tests run with an empty URL and fail at db.connect('').
 pytestmark = [
 	pytest.mark.integration,
 	pytest.mark.skipif(
-		_DATABASE_URL_TEST is None, reason='DATABASE_URL_TEST not set; integration tests require a live Postgres branch'
+		not _DATABASE_URL_TEST, reason='DATABASE_URL_TEST not set; integration tests require a live Postgres branch'
 	),
 ]
 

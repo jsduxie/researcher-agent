@@ -52,6 +52,13 @@ def main(argv=None):
 		all_papers.extend(_fetch(query))
 
 	unique = dedup_papers(all_papers)
+	# Papers without paperId cannot be persisted (paper_id is the PK) and cannot be
+	# deduplicated across runs, so drop them up front rather than crashing in upsert.
+	missing_id = [p for p in unique if not p.get('paperId')]
+	if missing_id:
+		print(f'Dropped {len(missing_id)} paper(s) without paperId (cannot persist)')
+	unique = [p for p in unique if p.get('paperId')]
+
 	if conn is not None:
 		run_id = db.start_run(conn, len(unique))
 		# Always upsert so existing rows refresh metadata (citation counts).
