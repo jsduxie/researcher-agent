@@ -1,0 +1,42 @@
+search_queries:
+  - 'Borderline Personality Disorder detection social media'
+  - 'BPD natural language processing Reddit'
+  - 'mental health NLP transformer BERT classification'
+  - 'explainable AI mental health NLP SHAP LIME'
+  - 'personality disorder machine learning detection'
+  - 'Hierarchical Attention Network'
+  - 'Feature Guided Attention'
+  - 'Attention mechanisms text classification'
+
+research_context: |
+  I am completing a research project surrounding the screening of Borderline Personality
+  Disorder (BPD/EUPD) from social media data.
+
+  My work involves:
+  - Evaluating a variety of machine learning (logistic regression, random forest) and deep
+    learning (CNN, BiLSTM, Hierarchical Attention Network, BERT transformers, Hierarchical
+    transformers) on the detection of BPD from Reddit posts
+  - Compiling an extended dataset of tough classification samples from similar conditions,
+    including depression, other personality disorders and CPTSD
+  - Evaluating the explainability of model-agnostic (SHAP, LIME) and model-specific methods
+    (attention, logistic regression coefficients, gradients) across model architectures
+  - Handling severe class imbalance
+  - Extending the current work on Hierarchical Attention Networks in line with BPD, by
+    incorporating feature-guided attention from NRC-VAD, LIWC and Empath features as an
+    additive bias for word- and sentence-level attention to improve performance and
+    explainability. These are divided into three heads mirroring core traits identified by
+    Sainslow and Southward: Interpersonal/Loneliness, Emotional instability/intensity,
+    Impulsive behaviours
+
+  My HAN implementation uses a MentalBERT word-level encoder and a transformer
+  sentence-level encoder in place of BiGRUs.
+
+  I am interested in papers relevant to: BPD or other personality disorder detection,
+  mental health NLP broadly, transformer architectures for text classification,
+  explainability/interpretability in clinical NLP, Reddit/social media mental health
+  analysis, hierarchical attention networks and hierarchical transformers.
+
+relevance_threshold: 6
+days_back: 14
+max_per_query: 8
+batch_size: 10
