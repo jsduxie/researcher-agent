@@ -7,11 +7,18 @@ from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from textwrap import dedent
 
 import requests
 
-from config import BATCH_SIZE, DAYS_BACK, MAX_PER_QUERY, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SEARCH_QUERIES
+from config import (
+	BATCH_SIZE,
+	DAYS_BACK,
+	MAX_PER_QUERY,
+	RELEVANCE_THRESHOLD,
+	RESEARCH_CONTEXT,
+	SCORER_PROMPT,
+	SEARCH_QUERIES,
+)
 
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
@@ -126,27 +133,7 @@ def _score_chunk(papers):
 
 	papers_block = '\n\n'.join(paper_entries)
 
-	prompt = dedent(f"""
-        You are a research assistant helping a masters student assess papers.
-
-        RESEARCH CONTEXT:
-        {RESEARCH_CONTEXT}
-
-        PAPERS:
-        {papers_block}
-
-        For EACH paper, assess its relevance to the student's research.
-        Respond with a JSON array (no markdown, no extra text) where each element has:
-        {{
-          "index": <integer matching the [i] label>,
-          "relevance_score": <integer 1-10>,
-          "relevance_reason": "<one sentence on why it is or is not relevant>",
-          "summary": "<2-3 sentences summarising the paper from the angle of the student's research>",
-          "key_contribution": "<the single most important takeaway for this student>"
-        }}
-
-        Return ONLY the JSON array.
-    """)
+	prompt = SCORER_PROMPT.format(research_context=RESEARCH_CONTEXT, papers_block=papers_block)
 
 	try:
 		response = gemini(prompt)
