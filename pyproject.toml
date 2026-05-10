@@ -27,3 +27,4 @@ max-args = 5
 [tool.pytest.ini_options]
 pythonpath = ['.']
 testpaths = ['tests']
+markers = ['integration: tests that require a live Postgres connection via DATABASE_URL_TEST']
