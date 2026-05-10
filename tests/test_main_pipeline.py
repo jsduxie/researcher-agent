@@ -167,3 +167,34 @@ def test_live_run_propagates_when_scorer_raises_unhandled(mock_db, mock_io):
 	mock_db['mark_scoring_results'].assert_not_called()
 	mock_db['finish_run'].assert_not_called()
 	mock_io['send'].assert_not_called()
+
+
+# -- paperId guard --
+
+
+def test_live_run_drops_papers_without_paper_id_before_persisting(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1', 'title': 'with id'}, {'title': 'no id'}])
+
+	main.main([])
+
+	# Only the paper with paperId reaches upsert_paper and start_run's count.
+	mock_db['upsert_paper'].assert_called_once()
+	upserted = mock_db['upsert_paper'].call_args.args[1]
+	assert upserted['paperId'] == 'p1'
+	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 1)
+	# Log line confirms the drop.
+	assert 'Dropped 1 paper(s) without paperId' in capsys.readouterr().out
+
+
+def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io, mocker, capsys):
+	# Edge case: all fetched papers are missing paperId. The pipeline should drop them,
+	# log, and finish cleanly without ever calling upsert.
+	mocker.patch('main.fetch_papers', return_value=[{'title': 'one'}, {'title': 'two'}])
+	mock_io['score'].return_value = ([], set())
+
+	main.main([])
+
+	mock_db['upsert_paper'].assert_not_called()
+	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
+	assert 'Dropped 2 paper(s) without paperId' in capsys.readouterr().out
