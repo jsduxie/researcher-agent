@@ -75,3 +75,22 @@ def start_run(conn, papers_fetched):
 def finish_run(conn, run_id, papers_kept):
 	with conn.cursor() as cur:
 		cur.execute('UPDATE runs SET finished_at = NOW(), papers_kept = %s WHERE id = %s', (papers_kept, run_id))
+
+
+def needs_scoring(conn, paper_ids):
+	if not paper_ids:
+		return set()
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id FROM papers WHERE paper_id = ANY(%s) AND scored_at IS NULL', (list(paper_ids),))
+		return {row[0] for row in cur.fetchall()}
+
+
+def mark_scoring_results(conn, attempted, responded):
+	if not attempted:
+		return
+	attempted_list = list(attempted)
+	responded_list = list(responded)
+	with conn.transaction(), conn.cursor() as cur:
+		cur.execute('UPDATE papers SET score_attempts = score_attempts + 1 WHERE paper_id = ANY(%s)', (attempted_list,))
+		if responded_list:
+			cur.execute('UPDATE papers SET scored_at = NOW() WHERE paper_id = ANY(%s)', (responded_list,))

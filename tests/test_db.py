@@ -229,3 +229,74 @@ def test_finish_run_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('finish boom')
 	with pytest.raises(RuntimeError, match='finish boom'):
 		db.finish_run(mock_conn, run_id=1, papers_kept=0)
+
+
+# -- needs_scoring --
+
+
+def test_needs_scoring_returns_empty_set_for_empty_input(mock_conn):
+	assert db.needs_scoring(mock_conn, []) == set()
+	_cursor(mock_conn).execute.assert_not_called()
+
+
+def test_needs_scoring_selects_paper_id_where_scored_at_is_null(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [('p1',), ('p3',)]
+	result = db.needs_scoring(mock_conn, ['p1', 'p2', 'p3'])
+	call = _cursor(mock_conn).execute.call_args
+	assert 'SELECT paper_id FROM papers' in call.args[0]
+	assert 'scored_at IS NULL' in call.args[0]
+	assert 'paper_id = ANY(%s)' in call.args[0]
+	assert call.args[1] == (['p1', 'p2', 'p3'],)
+	assert result == {'p1', 'p3'}
+
+
+def test_needs_scoring_returns_empty_set_when_no_rows_match(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.needs_scoring(mock_conn, ['p1']) == set()
+
+
+def test_needs_scoring_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.needs_scoring(mock_conn, ['p1'])
+
+
+# -- mark_scoring_results --
+
+
+def test_mark_scoring_results_returns_early_when_attempted_is_empty(mock_conn):
+	db.mark_scoring_results(mock_conn, attempted=[], responded=set())
+	_cursor(mock_conn).execute.assert_not_called()
+
+
+def test_mark_scoring_results_increments_score_attempts_for_attempted(mock_conn):
+	db.mark_scoring_results(mock_conn, attempted=['p1', 'p2'], responded=set())
+	# Only one UPDATE statement when responded is empty.
+	calls = _cursor(mock_conn).execute.call_args_list
+	assert len(calls) == 1
+	assert 'UPDATE papers SET score_attempts = score_attempts + 1' in calls[0].args[0]
+	assert 'paper_id = ANY(%s)' in calls[0].args[0]
+	assert calls[0].args[1] == (['p1', 'p2'],)
+
+
+def test_mark_scoring_results_sets_scored_at_for_responded(mock_conn):
+	db.mark_scoring_results(mock_conn, attempted=['p1', 'p2'], responded={'p1'})
+	calls = _cursor(mock_conn).execute.call_args_list
+	assert len(calls) == 2
+	# First UPDATE: increment score_attempts for all attempted.
+	assert 'score_attempts = score_attempts + 1' in calls[0].args[0]
+	assert sorted(calls[0].args[1][0]) == ['p1', 'p2']
+	# Second UPDATE: set scored_at for responded only.
+	assert 'scored_at = NOW()' in calls[1].args[0]
+	assert calls[1].args[1] == (['p1'],)
+
+
+def test_mark_scoring_results_wraps_updates_in_a_transaction(mock_conn):
+	db.mark_scoring_results(mock_conn, attempted=['p1'], responded={'p1'})
+	mock_conn.transaction.assert_called_once()
+
+
+def test_mark_scoring_results_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('update boom')
+	with pytest.raises(RuntimeError, match='update boom'):
+		db.mark_scoring_results(mock_conn, attempted=['p1'], responded={'p1'})

@@ -42,9 +42,13 @@ def parse_gemini_scores(response_text):
 
 
 def apply_scores(papers, scores, threshold):
+	# Returns (enriched, responded_paper_ids). responded covers any paper that got
+	# a valid numeric Gemini score, regardless of threshold or whether the text
+	# fields were complete. Papers missing from this set were never scored
+	# successfully and should be retried on a later run.
 	if not isinstance(scores, list):
 		print(f'Dropped batch (scores payload not a list, got {type(scores).__name__})')
-		return []
+		return [], set()
 
 	results_by_index = {}
 	for r in scores:
@@ -58,6 +62,7 @@ def apply_scores(papers, scores, threshold):
 		results_by_index[idx] = r
 
 	enriched = []
+	responded = set()
 	for i, paper in enumerate(papers):
 		title = paper.get('title', '')[:60]
 		data = results_by_index.get(i)
@@ -68,6 +73,9 @@ def apply_scores(papers, scores, threshold):
 		if not isinstance(score, int) or isinstance(score, bool):
 			print(f'Dropped (invalid score {score!r}): {title}')
 			continue
+		paper_id = paper.get('paperId')
+		if paper_id:
+			responded.add(paper_id)
 		if score < threshold:
 			print(f' Dropped (score {score}/10): {title}')
 			continue
@@ -81,25 +89,28 @@ def apply_scores(papers, scores, threshold):
 		paper['ai_contribution'] = data['key_contribution']
 		print(f'Kept (score {score}/10): {title}')
 		enriched.append(paper)
-	return enriched
+	return enriched, responded
 
 
 def score_and_summarise(papers, gemini_fn):
 	if not papers:
-		return []
+		return [], set()
 
 	enriched = []
+	responded = set()
 	for chunk_start in range(0, len(papers), BATCH_SIZE):
 		chunk = papers[chunk_start : chunk_start + BATCH_SIZE]
 		print(f'Scoring batch {chunk_start // BATCH_SIZE + 1} ({len(chunk)} papers)...')
-		enriched.extend(_score_chunk(chunk, gemini_fn))
+		chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn)
+		enriched.extend(chunk_enriched)
+		responded.update(chunk_responded)
 
-	return enriched
+	return enriched, responded
 
 
 def _score_chunk(papers, gemini_fn):
 	if not papers:
-		return []
+		return [], set()
 
 	paper_entries = []
 	for i, p in enumerate(papers):
@@ -115,6 +126,6 @@ def _score_chunk(papers, gemini_fn):
 		results = parse_gemini_scores(response)
 	except Exception as e:
 		print(f'Batch Gemini error: {e}')
-		return []
+		return [], set()
 
 	return apply_scores(papers, results, RELEVANCE_THRESHOLD)

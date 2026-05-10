@@ -34,13 +34,6 @@ def _send(html, paper_count):
 	emailer.send_email(html, paper_count, creds)
 
 
-def _filter_new(conn, papers):
-	# Upsert refreshes metadata for existing papers and returns True only for newly inserted ones.
-	if conn is None:
-		return papers
-	return [p for p in papers if db.upsert_paper(conn, p)]
-
-
 def main(argv=None):
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
@@ -61,13 +54,22 @@ def main(argv=None):
 	unique = dedup_papers(all_papers)
 	if conn is not None:
 		run_id = db.start_run(conn, len(unique))
+		# Always upsert so existing rows refresh metadata (citation counts).
+		for p in unique:
+			db.upsert_paper(conn, p)
+		unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
+		new_papers = [p for p in unique if p['paperId'] in unscored]
+	else:
+		new_papers = unique
 
-	new_papers = _filter_new(conn, unique)
-	print(f'{len(unique)} unique papers found, {len(new_papers)} new since last run. Scoring\n')
+	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
-	enriched = scorer.score_and_summarise(new_papers, _gemini)
+	enriched, responded = scorer.score_and_summarise(new_papers, _gemini)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
+
+	if conn is not None and new_papers:
+		db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
 
 	if not enriched:
 		print('No relevant papers, skipping email.')

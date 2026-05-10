@@ -8,8 +8,14 @@ CREATE TABLE IF NOT EXISTS papers (
 	doi TEXT,
 	pdf_url TEXT,
 	fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	scored_at TIMESTAMPTZ,
+	score_attempts INTEGER NOT NULL DEFAULT 0
 );
+
+-- Idempotent migration for databases created before these columns existed.
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS scored_at TIMESTAMPTZ;
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS score_attempts INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS paper_authors (
 	paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
