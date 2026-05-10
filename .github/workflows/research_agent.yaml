@@ -30,6 +30,8 @@ jobs:
           ruff format --check .
 
       - name: Test
+        env:
+          DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
         run: pytest
 
   send-digest:
