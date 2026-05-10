@@ -1,0 +1,51 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 2
+  round: down
+  range: '90...100'
+  status:
+    project:
+      default:
+        target: 95%
+        threshold: 0%
+    patch:
+      default:
+        target: 95%
+        threshold: 0%
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 90%
+        threshold: 0%
+  individual_components:
+    - component_id: config
+      paths: ['config.py']
+    - component_id: db
+      paths: ['db.py']
+    - component_id: emailer
+      paths: ['emailer.py']
+    - component_id: fetcher
+      paths: ['fetcher.py']
+    - component_id: main
+      paths: ['main.py']
+    - component_id: render
+      paths: ['render.py']
+    - component_id: scorer
+      paths: ['scorer.py']
+    - component_id: summariser
+      paths: ['summariser.py']
+    - component_id: scripts
+      paths: ['scripts/**/*.py']
+
+comment:
+  layout: 'header, diff, components, files, footer'
+  behavior: default
+  require_changes: false
+
+ignore:
+  - 'tests/**'
+  - '.venv/**'
