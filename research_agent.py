@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import smtplib
@@ -5,6 +6,7 @@ import time
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
 from textwrap import dedent
 
 import requests
@@ -57,8 +59,15 @@ BATCH_SIZE = 10
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
 
+DRY_RUN = False
+FIXTURES_DIR = Path(__file__).parent / 'tests' / 'fixtures'
+
 
 def fetch_papers(query):
+	if DRY_RUN:
+		with open(FIXTURES_DIR / 'papers.json') as f:
+			return json.load(f)
+
 	cutoff = (datetime.now() - timedelta(days=DAYS_BACK)).year
 	params = {
 		'query': query,
@@ -77,6 +86,10 @@ def fetch_papers(query):
 
 
 def gemini(prompt, retries=3):
+	if DRY_RUN:
+		with open(FIXTURES_DIR / 'gemini_score.json') as f:
+			return json.dumps(json.load(f))
+
 	headers = {'Content-Type': 'application/json'}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
 
@@ -331,6 +344,10 @@ def build_email(papers):
 
 
 def send_email(html, paper_count):
+	if DRY_RUN:
+		print(html)
+		return
+
 	msg = MIMEMultipart('alternative')
 	msg['Subject'] = f'Research Digest: {paper_count} relevant papers — {datetime.now().strftime("%b %d")}'
 	msg['From'] = os.environ['GMAIL_USER']
@@ -344,7 +361,14 @@ def send_email(html, paper_count):
 	print(f'Email sent with {paper_count} papers.')
 
 
-def main():
+def main(argv=None):
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
+	args = parser.parse_args(argv)
+
+	global DRY_RUN
+	DRY_RUN = args.dry_run
+
 	all_papers = []
 	for query in SEARCH_QUERIES:
 		print(f'\nSearching: {query}')
