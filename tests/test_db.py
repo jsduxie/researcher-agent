@@ -188,3 +188,44 @@ def test_finish_run_updates_finished_at_and_papers_kept(mock_conn):
 	assert 'finished_at = NOW()' in call.args[0]
 	assert 'papers_kept = %s' in call.args[0]
 	assert call.args[1] == (7, 42)
+
+
+# -- error propagation: db.py never swallows database errors --
+
+
+def test_connect_propagates_operational_error(mocker):
+	import psycopg
+
+	mocker.patch('db.psycopg.connect', side_effect=psycopg.OperationalError('connection refused'))
+	with pytest.raises(psycopg.OperationalError, match='connection refused'):
+		db.connect('postgresql://bad')
+
+
+def test_init_schema_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('DDL boom')
+	with pytest.raises(RuntimeError, match='DDL boom'):
+		db.init_schema(mock_conn)
+
+
+def test_upsert_paper_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
+	with pytest.raises(RuntimeError, match='write boom'):
+		db.upsert_paper(mock_conn, {'paperId': 'abc'})
+
+
+def test_paper_exists_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('read boom')
+	with pytest.raises(RuntimeError, match='read boom'):
+		db.paper_exists(mock_conn, 'abc')
+
+
+def test_start_run_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('start boom')
+	with pytest.raises(RuntimeError, match='start boom'):
+		db.start_run(mock_conn, 10)
+
+
+def test_finish_run_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('finish boom')
+	with pytest.raises(RuntimeError, match='finish boom'):
+		db.finish_run(mock_conn, run_id=1, papers_kept=0)
