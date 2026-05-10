@@ -224,3 +224,100 @@ def test_write_then_paper_exists_then_read_is_consistent(conn):
 	with conn.cursor() as cur:
 		cur.execute('SELECT title, citation_count FROM papers WHERE paper_id = %s', ('p1',))
 		assert cur.fetchone() == ('T', 5)
+
+
+# -- needs_scoring --
+
+
+def test_needs_scoring_returns_paper_ids_with_null_scored_at(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.upsert_paper(conn, {'paperId': 'p2'})
+	db.upsert_paper(conn, {'paperId': 'p3'})
+	# p2 is already scored.
+	db.mark_scoring_results(conn, attempted=['p2'], responded={'p2'})
+	assert db.needs_scoring(conn, ['p1', 'p2', 'p3']) == {'p1', 'p3'}
+
+
+def test_needs_scoring_skips_paper_ids_not_in_the_input_list(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.upsert_paper(conn, {'paperId': 'p2'})
+	# Only ask about p1.
+	assert db.needs_scoring(conn, ['p1']) == {'p1'}
+
+
+def test_needs_scoring_returns_empty_when_input_list_is_empty(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	assert db.needs_scoring(conn, []) == set()
+
+
+def test_needs_scoring_returns_empty_when_no_matching_rows_exist(conn):
+	assert db.needs_scoring(conn, ['never-upserted']) == set()
+
+
+# -- mark_scoring_results --
+
+
+def test_mark_scoring_results_sets_scored_at_for_responded_papers(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.upsert_paper(conn, {'paperId': 'p2'})
+	db.mark_scoring_results(conn, attempted=['p1', 'p2'], responded={'p1'})
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id, scored_at FROM papers WHERE paper_id IN (%s, %s) ORDER BY paper_id', ('p1', 'p2'))
+		rows = cur.fetchall()
+	# p1 was responded: scored_at set. p2 attempted but not responded: scored_at still NULL.
+	assert rows[0][0] == 'p1' and rows[0][1] is not None
+	assert rows[1][0] == 'p2' and rows[1][1] is None
+
+
+def test_mark_scoring_results_increments_score_attempts_for_all_attempted(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.upsert_paper(conn, {'paperId': 'p2'})
+	db.mark_scoring_results(conn, attempted=['p1', 'p2'], responded=set())
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT paper_id, score_attempts FROM papers WHERE paper_id IN (%s, %s) ORDER BY paper_id', ('p1', 'p2')
+		)
+		assert cur.fetchall() == [('p1', 1), ('p2', 1)]
+
+
+def test_mark_scoring_results_accumulates_attempts_across_runs(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.mark_scoring_results(conn, attempted=['p1'], responded=set())
+	db.mark_scoring_results(conn, attempted=['p1'], responded=set())
+	db.mark_scoring_results(conn, attempted=['p1'], responded={'p1'})
+	with conn.cursor() as cur:
+		cur.execute('SELECT score_attempts, scored_at FROM papers WHERE paper_id = %s', ('p1',))
+		attempts, scored_at = cur.fetchone()
+	assert attempts == 3
+	assert scored_at is not None
+
+
+def test_mark_scoring_results_noops_on_empty_attempted(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.mark_scoring_results(conn, attempted=[], responded=set())
+	with conn.cursor() as cur:
+		cur.execute('SELECT score_attempts, scored_at FROM papers WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone() == (0, None)
+
+
+# -- orphan-retry acceptance: Gemini-failed papers come back on the next run --
+
+
+def test_paper_with_failed_gemini_run_is_retried_on_next_run(conn):
+	# Run 1: paper is upserted and attempted, but Gemini returned nothing usable
+	# (responded set is empty). scored_at stays NULL.
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T'})
+	db.mark_scoring_results(conn, attempted=['p1'], responded=set())
+
+	# needs_scoring still returns p1 because scored_at IS NULL.
+	assert db.needs_scoring(conn, ['p1']) == {'p1'}
+
+	# Run 2: same paper, Gemini now responds. scored_at gets set.
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T'})  # citation refresh path
+	db.mark_scoring_results(conn, attempted=['p1'], responded={'p1'})
+
+	# Run 3: needs_scoring no longer returns it.
+	assert db.needs_scoring(conn, ['p1']) == set()
+	with conn.cursor() as cur:
+		cur.execute('SELECT score_attempts FROM papers WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone()[0] == 2  # incremented once per run

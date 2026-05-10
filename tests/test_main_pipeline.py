@@ -15,12 +15,15 @@ def env(monkeypatch):
 @pytest.fixture
 def mock_db(mocker):
 	conn = mocker.MagicMock()
+	# By default, needs_scoring claims every paper passed in needs scoring.
 	return {
 		'conn': conn,
 		'connect': mocker.patch('main.db.connect', return_value=conn),
 		'init_schema': mocker.patch('main.db.init_schema'),
 		'start_run': mocker.patch('main.db.start_run', return_value=42),
-		'upsert_paper': mocker.patch('main.db.upsert_paper', return_value=True),
+		'upsert_paper': mocker.patch('main.db.upsert_paper'),
+		'needs_scoring': mocker.patch('main.db.needs_scoring', side_effect=lambda conn, ids: set(ids)),
+		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
 	}
 
@@ -29,7 +32,9 @@ def mock_db(mocker):
 def mock_io(mocker):
 	return {
 		'fetch': mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}]),
-		'score': mocker.patch('main.scorer.score_and_summarise', return_value=[{'paperId': 'p1', 'ai_score': 8}]),
+		'score': mocker.patch(
+			'main.scorer.score_and_summarise', return_value=([{'paperId': 'p1', 'ai_score': 8}], {'p1'})
+		),
 		'send': mocker.patch('main.emailer.send_email'),
 	}
 
@@ -50,16 +55,37 @@ def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
 	assert upserted == ['p1', 'p2', 'p3']
 
 
-def test_live_run_only_passes_newly_inserted_papers_to_scorer(mock_db, mock_io, mocker):
+def test_live_run_only_scores_papers_needs_scoring_reports_as_unscored(mock_db, mock_io, mocker):
+	# needs_scoring is what now controls which papers reach the scorer (replaces
+	# the was_inserted filter from commit 2).
 	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
-	mock_db['upsert_paper'].side_effect = [True, False, True]
+	mock_db['needs_scoring'].side_effect = lambda conn, ids: {'p1', 'p3'}
 	main.main([])
 	scored = mock_io['score'].call_args.args[0]
-	assert [p['paperId'] for p in scored] == ['p1', 'p3']
+	assert sorted(p['paperId'] for p in scored) == ['p1', 'p3']
+
+
+def test_live_run_marks_scoring_results_with_attempted_and_responded(mock_db, mock_io):
+	mock_io['score'].return_value = ([{'paperId': 'p1', 'ai_score': 8}], {'p1'})
+	main.main([])
+	mock_db['mark_scoring_results'].assert_called_once()
+	call = mock_db['mark_scoring_results'].call_args
+	assert call.args[0] is mock_db['conn']
+	assert call.kwargs['attempted'] == ['p1']
+	assert call.kwargs['responded'] == {'p1'}
+
+
+def test_live_run_does_not_call_mark_scoring_results_when_nothing_needs_scoring(mock_db, mock_io):
+	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
+	main.main([])
+	mock_db['mark_scoring_results'].assert_not_called()
+	# Scorer also gets nothing since nothing needed scoring.
+	scored = mock_io['score'].call_args.args[0]
+	assert scored == []
 
 
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
-	mock_io['score'].return_value = []
+	mock_io['score'].return_value = ([], set())
 	main.main([])
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
 	mock_io['send'].assert_not_called()
@@ -103,25 +129,29 @@ def test_live_run_propagates_db_connect_failure(mocker, mock_io):
 
 def test_live_run_does_not_finish_run_when_upsert_crashes_mid_pipeline(mock_db, mock_io, mocker):
 	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
-	mock_db['upsert_paper'].side_effect = [True, RuntimeError('upsert boom'), True]
+	mock_db['upsert_paper'].side_effect = [None, RuntimeError('upsert boom'), None]
 
 	with pytest.raises(RuntimeError, match='upsert boom'):
 		main.main([])
 
-	# Run row stays with NULL finished_at so the failed run is visible in diagnostics.
 	mock_db['finish_run'].assert_not_called()
+	mock_db['mark_scoring_results'].assert_not_called()
 	mock_io['score'].assert_not_called()
 	mock_io['send'].assert_not_called()
 
 
-def test_live_run_upserts_papers_even_when_scorer_returns_empty(mock_db, mock_io):
-	# Simulates Gemini failure: _score_chunk catches the exception and returns []. The
-	# pipeline must still record the run cleanly and persist the papers that were fetched.
-	mock_io['score'].return_value = []
+def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, mock_io):
+	# Simulates a Gemini batch failure: scorer returns ([], set()). Papers were attempted
+	# but none responded. mark_scoring_results still records the attempts so we can see
+	# them in score_attempts. scored_at stays NULL, so a later run re-tries them.
+	mock_io['score'].return_value = ([], set())
 
 	main.main([])
 
-	assert mock_db['upsert_paper'].call_count == 1
+	mock_db['mark_scoring_results'].assert_called_once()
+	call = mock_db['mark_scoring_results'].call_args
+	assert call.kwargs['attempted'] == ['p1']
+	assert call.kwargs['responded'] == set()
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
 	mock_io['send'].assert_not_called()
 
@@ -132,7 +162,8 @@ def test_live_run_propagates_when_scorer_raises_unhandled(mock_db, mock_io):
 	with pytest.raises(RuntimeError, match='scorer boom'):
 		main.main([])
 
-	# Upserts ran before scoring, finish_run did not.
+	# Upserts ran before scoring; mark_scoring_results and finish_run did not.
 	assert mock_db['upsert_paper'].call_count == 1
+	mock_db['mark_scoring_results'].assert_not_called()
 	mock_db['finish_run'].assert_not_called()
 	mock_io['send'].assert_not_called()
