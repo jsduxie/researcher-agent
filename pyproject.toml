@@ -28,3 +28,12 @@ max-args = 5
 pythonpath = ['.']
 testpaths = ['tests']
 markers = ['integration: tests that require a live Postgres connection via DATABASE_URL_TEST']
+
+[tool.coverage.run]
+branch = true
+source = ['.']
+omit = ['tests/*', '.venv/*', '*/site-packages/*']
+
+[tool.coverage.report]
+exclude_lines = ['pragma: no cover', "if __name__ == '__main__':"]
+skip_empty = true

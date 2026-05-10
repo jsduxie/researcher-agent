@@ -198,3 +198,19 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 0)
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
 	assert 'Dropped 2 paper(s) without paperId' in capsys.readouterr().out
+
+
+# -- gemini wrapper --
+
+
+def test_gemini_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
+	# Orchestration tests mock scorer.score_and_summarise wholesale, so the live-mode
+	# branch of main._gemini (the callable passed to the scorer) is never exercised
+	# end-to-end. Cover it directly.
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='gemini json')
+
+	result = main._gemini('prompt text')
+
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3)
+	assert result == 'gemini json'
