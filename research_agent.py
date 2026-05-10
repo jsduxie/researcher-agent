@@ -11,50 +11,7 @@ from textwrap import dedent
 
 import requests
 
-SEARCH_QUERIES = [
-	'Borderline Personality Disorder detection social media',
-	'BPD natural language processing Reddit',
-	'mental health NLP transformer BERT classification',
-	'explainable AI mental health NLP SHAP LIME',
-	'personality disorder machine learning detection',
-	'Hierarchical Attention Network',
-	'Feature Guided Attention',
-	'Attention mechanisms text classification',
-]
-
-RESEARCH_CONTEXT = dedent("""
-    I am completing a research project surrounding the screening of Borderline Personality
-    Disorder (BPD/EUPD) from social media data.
-
-    My work involves:
-    - Evaluating a variety of machine learning (logistic regression, random forest) and deep
-      learning (CNN, BiLSTM, Hierarchical Attention Network, BERT transformers, Hierarchical
-      transformers) on the detection of BPD from Reddit posts
-    - Compiling an extended dataset of tough classification samples from similar conditions,
-      including depression, other personality disorders and CPTSD
-    - Evaluating the explainability of model-agnostic (SHAP, LIME) and model-specific methods
-      (attention, logistic regression coefficients, gradients) across model architectures
-    - Handling severe class imbalance
-    - Extending the current work on Hierarchical Attention Networks in line with BPD, by
-      incorporating feature-guided attention from NRC-VAD, LIWC and Empath features as an
-      additive bias for word- and sentence-level attention to improve performance and
-      explainability. These are divided into three heads mirroring core traits identified by
-      Sainslow and Southward: Interpersonal/Loneliness, Emotional instability/intensity,
-      Impulsive behaviours
-
-    My HAN implementation uses a MentalBERT word-level encoder and a transformer
-    sentence-level encoder in place of BiGRUs.
-
-    I am interested in papers relevant to: BPD or other personality disorder detection,
-    mental health NLP broadly, transformer architectures for text classification,
-    explainability/interpretability in clinical NLP, Reddit/social media mental health
-    analysis, hierarchical attention networks and hierarchical transformers.
-""")
-
-RELEVANCE_THRESHOLD = 6
-DAYS_BACK = 14
-MAX_PER_QUERY = 8
-BATCH_SIZE = 10
+from config import BATCH_SIZE, DAYS_BACK, MAX_PER_QUERY, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SEARCH_QUERIES
 
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
@@ -277,7 +234,7 @@ def paper_card_html(paper, is_last=False):
 	reason = paper.get('ai_reason', '')
 	links = paper_links_html(paper)
 
-	return f'''<div style="{card_style}">
+	return f"""<div style="{card_style}">
   <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
     <td style="width:40px; vertical-align:top; padding-right:14px;">
       <div style="{badge_style}">{score_display}</div>
@@ -293,7 +250,7 @@ def paper_card_html(paper, is_last=False):
   </div>
   <div style="{S['reason']}">{reason}</div>
   {links}
-</div>'''
+</div>"""
 
 
 def build_email(papers):
@@ -307,7 +264,7 @@ def build_email(papers):
 	else:
 		cards_html = f'<div style="{S["empty"]}">No relevant papers found this period.</div>'
 
-	return f'''<!DOCTYPE html>
+	return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Research Digest</title>
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -340,7 +297,7 @@ def build_email(papers):
   </div>
 
 </div>
-</body></html>'''
+</body></html>"""
 
 
 def send_email(html, paper_count):
