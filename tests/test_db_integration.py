@@ -169,3 +169,58 @@ def test_two_consecutive_runs_second_does_not_re_score_existing_paper(conn):
 	# Run 2: fetch same paper. Upsert returns False, so pipeline filters it out of scoring.
 	second = db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T'})
 	assert second is False
+
+
+# -- failure modes: real DB errors --
+
+
+def test_connect_raises_for_unreachable_host():
+	import psycopg
+
+	with pytest.raises(psycopg.OperationalError):
+		db.connect('postgresql://user:pass@127.0.0.1:1/db?connect_timeout=2')
+
+
+# -- round-trip: writes match reads byte-for-byte --
+
+
+def test_upsert_paper_round_trips_every_field(conn):
+	paper = {
+		'paperId': 'p1',
+		'title': 'A round-trip paper',
+		'abstract': 'Some abstract.',
+		'year': 2024,
+		'citationCount': 42,
+		'url': 'https://ss/p1',
+		'externalIds': {'DOI': '10.1/p1'},
+		'openAccessPdf': {'url': 'https://x/p1.pdf'},
+		'authors': [{'name': 'Smith J.'}, {'name': 'Doe A.'}],
+	}
+	db.upsert_paper(conn, paper)
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT paper_id, title, abstract, year, citation_count, url, doi, pdf_url FROM papers WHERE paper_id = %s',
+			('p1',),
+		)
+		row = cur.fetchone()
+	assert row == (
+		'p1',
+		'A round-trip paper',
+		'Some abstract.',
+		2024,
+		42,
+		'https://ss/p1',
+		'10.1/p1',
+		'https://x/p1.pdf',
+	)
+	assert _read_authors(conn, 'p1') == [(0, 'Smith J.'), (1, 'Doe A.')]
+
+
+def test_write_then_paper_exists_then_read_is_consistent(conn):
+	# Sequential round-trip across the three primary read/write functions.
+	assert db.paper_exists(conn, 'p1') is False
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T', 'citationCount': 5})
+	assert db.paper_exists(conn, 'p1') is True
+	with conn.cursor() as cur:
+		cur.execute('SELECT title, citation_count FROM papers WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone() == ('T', 5)

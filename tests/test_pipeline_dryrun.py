@@ -6,12 +6,14 @@ def test_dry_run_uses_fixtures_and_makes_no_network_calls(mocker, capsys):
 	mock_get = mocker.patch('fetcher.requests.get')
 	mock_post = mocker.patch('scorer.requests.post')
 	mock_smtp = mocker.patch('emailer.smtplib.SMTP_SSL')
+	mock_db_connect = mocker.patch('db.psycopg.connect')
 
 	main.main(['--dry-run'])
 
 	mock_get.assert_not_called()
 	mock_post.assert_not_called()
 	mock_smtp.assert_not_called()
+	mock_db_connect.assert_not_called()
 
 	captured = capsys.readouterr()
 	assert '<!DOCTYPE html>' in captured.out
