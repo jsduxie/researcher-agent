@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 import requests
@@ -6,6 +7,9 @@ import requests
 from config import BATCH_SIZE, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT
 
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
+
+_FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
+_REQUIRED_RESULT_FIELDS = ('relevance_reason', 'summary', 'key_contribution')
 
 
 def gemini(prompt, api_key, retries=3):
@@ -21,18 +25,38 @@ def gemini(prompt, api_key, retries=3):
 			time.sleep(wait)
 			continue
 		r.raise_for_status()
-		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+		try:
+			return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+		except (KeyError, IndexError, TypeError) as e:
+			raise ValueError(f'Gemini response missing expected fields: {e}') from e
 
 	raise Exception('Gemini failed after retries')
 
 
 def parse_gemini_scores(response_text):
-	cleaned = response_text.replace('```json', '').replace('```', '').strip()
-	return json.loads(cleaned)
+	cleaned = _FENCE_RE.sub('', response_text).strip()
+	parsed = json.loads(cleaned)
+	if not isinstance(parsed, list):
+		raise ValueError(f'Expected JSON array, got {type(parsed).__name__}')
+	return parsed
 
 
 def apply_scores(papers, scores, threshold):
-	results_by_index = {r['index']: r for r in scores}
+	if not isinstance(scores, list):
+		print(f'Dropped batch (scores payload not a list, got {type(scores).__name__})')
+		return []
+
+	results_by_index = {}
+	for r in scores:
+		if not isinstance(r, dict):
+			print(f'Skipped (non-dict result: {r!r})')
+			continue
+		idx = r.get('index')
+		if not isinstance(idx, int) or isinstance(idx, bool):
+			print(f'Skipped (missing or invalid index: {idx!r})')
+			continue
+		results_by_index[idx] = r
+
 	enriched = []
 	for i, paper in enumerate(papers):
 		title = paper.get('title', '')[:60]
@@ -46,6 +70,10 @@ def apply_scores(papers, scores, threshold):
 			continue
 		if score < threshold:
 			print(f' Dropped (score {score}/10): {title}')
+			continue
+		missing = [f for f in _REQUIRED_RESULT_FIELDS if not isinstance(data.get(f), str)]
+		if missing:
+			print(f'Dropped (missing fields {missing}): {title}')
 			continue
 		paper['ai_score'] = score
 		paper['ai_reason'] = data['relevance_reason']
