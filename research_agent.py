@@ -2,19 +2,16 @@ import argparse
 import json
 import os
 import smtplib
-import time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import requests
-
-from config import BATCH_SIZE, EMAIL_TEMPLATE, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT, SEARCH_QUERIES
+import scorer
+from config import EMAIL_TEMPLATE, RELEVANCE_THRESHOLD, SEARCH_QUERIES
 from fetcher import dedup_papers
 from fetcher import fetch_papers as _live_fetch_papers
-
-GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
+from scorer import apply_scores, parse_gemini_scores  # noqa: F401  (re-exported for test_score_parsing)
 
 DRY_RUN = False
 FIXTURES_DIR = Path(__file__).parent / 'tests' / 'fixtures'
@@ -31,86 +28,11 @@ def gemini(prompt, retries=3):
 	if DRY_RUN:
 		with open(FIXTURES_DIR / 'gemini_score.json') as f:
 			return json.dumps(json.load(f))
-
-	headers = {'Content-Type': 'application/json'}
-	body = {'contents': [{'parts': [{'text': prompt}]}]}
-
-	for attempt in range(retries):
-		time.sleep(5)
-		r = requests.post(f'{GEMINI_URL}?key={os.environ["GEMINI_API_KEY"]}', headers=headers, json=body, timeout=120)
-		if r.status_code == 429:
-			wait = 15 * (attempt + 1)
-			print(f'Gemini rate limited, waiting {wait}s')
-			time.sleep(wait)
-			continue
-		r.raise_for_status()
-		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-
-	raise Exception('Gemini failed after retries')
-
-
-def parse_gemini_scores(response_text):
-	cleaned = response_text.replace('```json', '').replace('```', '').strip()
-	return json.loads(cleaned)
-
-
-def apply_scores(papers, scores, threshold):
-	results_by_index = {r['index']: r for r in scores}
-	enriched = []
-	for i, paper in enumerate(papers):
-		title = paper.get('title', '')[:60]
-		data = results_by_index.get(i)
-		if data is None:
-			print(f'Missing result for [{i}]: {title}')
-			continue
-		score = data.get('relevance_score', 0)
-		if score < threshold:
-			print(f' Dropped (score {score}/10): {title}')
-			continue
-		paper['ai_score'] = score
-		paper['ai_reason'] = data['relevance_reason']
-		paper['ai_summary'] = data['summary']
-		paper['ai_contribution'] = data['key_contribution']
-		print(f'Kept (score {score}/10): {title}')
-		enriched.append(paper)
-	return enriched
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
 
 
 def score_and_summarise(papers):
-	if not papers:
-		return []
-
-	enriched = []
-	for chunk_start in range(0, len(papers), BATCH_SIZE):
-		chunk = papers[chunk_start : chunk_start + BATCH_SIZE]
-		print(f'Scoring batch {chunk_start // BATCH_SIZE + 1} ({len(chunk)} papers)...')
-		enriched.extend(_score_chunk(chunk))
-
-	return enriched
-
-
-def _score_chunk(papers):
-	if not papers:
-		return []
-
-	paper_entries = []
-	for i, p in enumerate(papers):
-		title = p.get('title', '')
-		abstract = p.get('abstract') or 'No abstract available.'
-		paper_entries.append(f'[{i}] Title: {title}\nAbstract: {abstract}')
-
-	papers_block = '\n\n'.join(paper_entries)
-
-	prompt = SCORER_PROMPT.format(research_context=RESEARCH_CONTEXT, papers_block=papers_block)
-
-	try:
-		response = gemini(prompt)
-		results = parse_gemini_scores(response)
-	except Exception as e:
-		print(f'Batch Gemini error: {e}')
-		return []
-
-	return apply_scores(papers, results, RELEVANCE_THRESHOLD)
+	return scorer.score_and_summarise(papers, gemini)
 
 
 SCORE_COLOURS = {9: '#059669', 7: '#2563eb', 0: '#64748b'}
