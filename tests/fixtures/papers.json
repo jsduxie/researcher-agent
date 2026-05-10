@@ -1,0 +1,38 @@
+[
+	{
+		"paperId": "abc123",
+		"title": "Detecting Borderline Personality Disorder from Reddit",
+		"abstract": "We present a transformer-based approach to detecting BPD signals in social media text.",
+		"authors": [{"name": "Smith J."}, {"name": "Doe A."}],
+		"year": 2024,
+		"citationCount": 12,
+		"externalIds": {"DOI": "10.1234/abc"},
+		"openAccessPdf": {"url": "https://example.com/paper.pdf"},
+		"url": "https://www.semanticscholar.org/paper/abc123",
+		"publicationDate": "2024-06-15"
+	},
+	{
+		"paperId": "def456",
+		"title": "Hierarchical Attention Networks for Mental Health NLP",
+		"abstract": "We extend HANs with feature-guided attention biases for clinical NLP tasks.",
+		"authors": [{"name": "Brown C."}],
+		"year": 2024,
+		"citationCount": 5,
+		"externalIds": {"DOI": "10.5678/def"},
+		"openAccessPdf": null,
+		"url": "https://www.semanticscholar.org/paper/def456",
+		"publicationDate": "2024-08-20"
+	},
+	{
+		"paperId": "abc123",
+		"title": "Duplicate of first paper",
+		"abstract": "Same paperId as first entry to test dedup.",
+		"authors": [],
+		"year": 2024,
+		"citationCount": 0,
+		"externalIds": {},
+		"openAccessPdf": null,
+		"url": "https://www.semanticscholar.org/paper/abc123",
+		"publicationDate": "2024-06-15"
+	}
+]

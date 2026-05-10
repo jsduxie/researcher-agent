@@ -1,0 +1,34 @@
+[
+	{
+		"paperId": "abc123",
+		"title": "Detecting Borderline Personality Disorder from Reddit",
+		"abstract": "We present a transformer-based approach to detecting BPD signals in social media text.",
+		"authors": [{"name": "Smith J."}, {"name": "Doe A."}],
+		"year": 2024,
+		"citationCount": 12,
+		"externalIds": {"DOI": "10.1234/abc"},
+		"openAccessPdf": {"url": "https://example.com/paper.pdf"},
+		"url": "https://www.semanticscholar.org/paper/abc123",
+		"publicationDate": "2024-06-15",
+		"ai_score": 9,
+		"ai_reason": "Directly relevant to BPD detection from social media.",
+		"ai_summary": "The authors fine-tune a transformer on Reddit posts to detect BPD markers, achieving strong baseline performance.",
+		"ai_contribution": "Demonstrates transformer-based BPD detection on Reddit data."
+	},
+	{
+		"paperId": "def456",
+		"title": "Hierarchical Attention Networks for Mental Health NLP",
+		"abstract": "We extend HANs with feature-guided attention biases for clinical NLP tasks.",
+		"authors": [{"name": "Brown C."}],
+		"year": 2024,
+		"citationCount": 5,
+		"externalIds": {"DOI": "10.5678/def"},
+		"openAccessPdf": null,
+		"url": "https://www.semanticscholar.org/paper/def456",
+		"publicationDate": "2024-08-20",
+		"ai_score": 7,
+		"ai_reason": "Hierarchical attention work overlaps with the student's HAN extensions.",
+		"ai_summary": "The paper introduces feature-guided attention biases in hierarchical attention networks for clinical NLP tasks.",
+		"ai_contribution": "Provides a recipe for incorporating external features into HAN attention scores."
+	}
+]
