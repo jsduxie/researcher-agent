@@ -35,11 +35,25 @@ jobs:
           ruff format --check .
 
       - name: Unit tests
-        run: pytest -m 'not integration'
+        run: pytest -m 'not integration' --cov --cov-branch --cov-report=term
 
       - name: Integration tests
         if: always() && env.DATABASE_URL_TEST != ''
-        run: pytest -m integration
+        run: pytest -m integration --cov-append --cov-branch --cov-report=term
+
+      - name: Coverage reports
+        if: always()
+        run: |
+          coverage xml -o coverage.xml
+          coverage json -o coverage.json
+
+      - name: Total coverage gate
+        if: always()
+        run: coverage report --fail-under=95
+
+      - name: Per-module coverage gate
+        if: always()
+        run: python scripts/check_coverage.py
 
   send-digest:
     needs: test
