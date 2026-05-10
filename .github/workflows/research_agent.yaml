@@ -29,10 +29,14 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Test
+      - name: Unit tests
+        run: pytest -m 'not integration'
+
+      - name: Integration tests
+        if: always()
         env:
           DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
-        run: pytest
+        run: pytest -m integration
 
   send-digest:
     needs: test

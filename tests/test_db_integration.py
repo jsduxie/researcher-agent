@@ -6,9 +6,12 @@ import db
 
 _DATABASE_URL_TEST = os.environ.get('DATABASE_URL_TEST')
 
-pytestmark = pytest.mark.skipif(
-	_DATABASE_URL_TEST is None, reason='DATABASE_URL_TEST not set; integration tests require a live Postgres branch'
-)
+pytestmark = [
+	pytest.mark.integration,
+	pytest.mark.skipif(
+		_DATABASE_URL_TEST is None, reason='DATABASE_URL_TEST not set; integration tests require a live Postgres branch'
+	),
+]
 
 
 @pytest.fixture
