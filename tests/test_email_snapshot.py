@@ -2,7 +2,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-import research_agent
 from research_agent import build_email
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -11,7 +10,7 @@ FIXTURES = Path(__file__).parent / 'fixtures'
 def _freeze_datetime(mocker, when):
 	mock_dt = mocker.MagicMock()
 	mock_dt.now.return_value = when
-	mocker.patch.object(research_agent, 'datetime', mock_dt)
+	mocker.patch('render.datetime', mock_dt)
 
 
 def test_email_matches_snapshot(mocker):
