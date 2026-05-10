@@ -181,3 +181,13 @@ def test_build_email_renders_snapshot_byte_for_byte(mocker):
 
 	expected = (FIXTURES / 'email_snapshot.html').read_text()
 	assert build_email(papers) == expected
+
+
+def test_build_email_renders_empty_state_with_no_papers(mocker):
+	mock_dt = mocker.MagicMock()
+	mock_dt.now.return_value = datetime(2026, 1, 15)
+	mocker.patch('render.datetime', mock_dt)
+
+	html = build_email([])
+	assert 'No relevant papers found this period.' in html
+	assert '>0<' in html
