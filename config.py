@@ -1,13 +1,18 @@
 from pathlib import Path
 
 import yaml
+from jinja2 import Environment, FileSystemLoader
 
 _ROOT = Path(__file__).parent
 _CONFIG_PATH = _ROOT / 'config' / 'digest.yaml'
 _PROMPTS_DIR = _ROOT / 'prompts'
+_TEMPLATES_DIR = _ROOT / 'templates'
 
 with open(_CONFIG_PATH) as f:
 	_digest = yaml.safe_load(f)
+
+with open(_TEMPLATES_DIR / 'style.yaml') as f:
+	S = yaml.safe_load(f)
 
 
 def _load_prompt(name):
@@ -23,3 +28,8 @@ MAX_PER_QUERY = _digest['max_per_query']
 BATCH_SIZE = _digest['batch_size']
 
 SCORER_PROMPT = _load_prompt('scorer')
+
+_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)
+_env.globals['S'] = S
+_env.globals['relevance_threshold'] = RELEVANCE_THRESHOLD
+EMAIL_TEMPLATE = _env.get_template('email.html')
