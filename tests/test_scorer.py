@@ -262,3 +262,111 @@ def test_gemini_sends_api_key_in_query_string():
 	gemini('prompt', 'my-secret-key')
 	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
 	assert qs['key'] == ['my-secret-key']
+
+
+# -- hardening: parse_gemini_scores --
+
+
+def test_parse_strips_uppercase_json_fence():
+	assert parse_gemini_scores('```JSON\n[{"index": 0}]\n```') == [{'index': 0}]
+
+
+def test_parse_raises_when_result_is_a_dict():
+	with pytest.raises(ValueError, match='Expected JSON array'):
+		parse_gemini_scores('{"index": 0}')
+
+
+def test_parse_raises_when_result_is_a_scalar():
+	with pytest.raises(ValueError, match='Expected JSON array'):
+		parse_gemini_scores('42')
+
+
+# -- hardening: apply_scores --
+
+
+@pytest.mark.parametrize('value', [None, {}, 42, 'list'])
+def test_apply_scores_returns_empty_when_scores_not_a_list(value, capsys):
+	assert apply_scores([{'title': 'p'}], value, threshold=6) == []
+	assert 'not a list' in capsys.readouterr().out
+
+
+def test_apply_scores_skips_non_dict_result(capsys):
+	papers = [{'title': 'p1'}, {'title': 'p2'}]
+	scores = ['not a dict', _valid_score(1, 8)]
+	result = apply_scores(papers, scores, threshold=6)
+	assert [p['title'] for p in result] == ['p2']
+	assert 'non-dict result' in capsys.readouterr().out
+
+
+def test_apply_scores_skips_result_missing_index(capsys):
+	papers = [{'title': 'p1'}, {'title': 'p2'}]
+	scores = [
+		{'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'},
+		_valid_score(1, 8),
+	]
+	result = apply_scores(papers, scores, threshold=6)
+	assert [p['title'] for p in result] == ['p2']
+	assert 'missing or invalid index' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('idx', ['0', True, 1.5, None])
+def test_apply_scores_skips_result_with_non_int_index(idx, capsys):
+	papers = [{'title': 'p1'}, {'title': 'p2'}]
+	scores = [
+		{'index': idx, 'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'},
+		_valid_score(1, 8),
+	]
+	result = apply_scores(papers, scores, threshold=6)
+	assert [p['title'] for p in result] == ['p2']
+
+
+def test_apply_scores_drops_paper_when_relevance_reason_missing(capsys):
+	papers = [{'title': 'p'}]
+	scores = [{'index': 0, 'relevance_score': 8, 'summary': 's', 'key_contribution': 'k'}]
+	assert apply_scores(papers, scores, threshold=6) == []
+	assert 'missing fields' in capsys.readouterr().out
+
+
+def test_apply_scores_drops_paper_when_summary_missing(capsys):
+	papers = [{'title': 'p'}]
+	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': 'r', 'key_contribution': 'k'}]
+	assert apply_scores(papers, scores, threshold=6) == []
+	assert 'missing fields' in capsys.readouterr().out
+
+
+def test_apply_scores_drops_paper_when_key_contribution_missing(capsys):
+	papers = [{'title': 'p'}]
+	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's'}]
+	assert apply_scores(papers, scores, threshold=6) == []
+	assert 'missing fields' in capsys.readouterr().out
+
+
+def test_apply_scores_drops_paper_when_required_field_is_non_string(capsys):
+	papers = [{'title': 'p'}]
+	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': None, 'summary': 's', 'key_contribution': 'k'}]
+	assert apply_scores(papers, scores, threshold=6) == []
+	assert 'missing fields' in capsys.readouterr().out
+
+
+# -- hardening: gemini response shape --
+
+
+@responses.activate
+def test_gemini_raises_when_candidates_key_missing():
+	responses.post(scorer.GEMINI_URL, json={})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		gemini('prompt', 'fake-key')
+
+
+@responses.activate
+def test_gemini_raises_when_candidates_is_empty():
+	responses.post(scorer.GEMINI_URL, json={'candidates': []})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		gemini('prompt', 'fake-key')
+
+
+@responses.activate
+def test_gemini_raises_when_text_field_missing():
+	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		gemini('prompt', 'fake-key')
