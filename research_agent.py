@@ -3,25 +3,17 @@ import json
 import os
 import smtplib
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
 import requests
 
-from config import (
-	BATCH_SIZE,
-	DAYS_BACK,
-	EMAIL_TEMPLATE,
-	MAX_PER_QUERY,
-	RELEVANCE_THRESHOLD,
-	RESEARCH_CONTEXT,
-	SCORER_PROMPT,
-	SEARCH_QUERIES,
-)
+from config import BATCH_SIZE, EMAIL_TEMPLATE, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT, SEARCH_QUERIES
+from fetcher import dedup_papers
+from fetcher import fetch_papers as _live_fetch_papers
 
-SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
 
 DRY_RUN = False
@@ -32,22 +24,7 @@ def fetch_papers(query):
 	if DRY_RUN:
 		with open(FIXTURES_DIR / 'papers.json') as f:
 			return json.load(f)
-
-	cutoff = (datetime.now() - timedelta(days=DAYS_BACK)).year
-	params = {
-		'query': query,
-		'limit': MAX_PER_QUERY,
-		'fields': 'title,abstract,authors,year,citationCount,externalIds,openAccessPdf,url,publicationDate',
-		'publicationDateOrYear': f'{cutoff}-',
-	}
-	try:
-		time.sleep(2)
-		r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=15)
-		r.raise_for_status()
-		return r.json().get('data', [])
-	except Exception as e:
-		print(f'Error fetching "{query}": {e}')
-		return []
+	return _live_fetch_papers(query)
 
 
 def gemini(prompt, retries=3):
@@ -70,16 +47,6 @@ def gemini(prompt, retries=3):
 		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
 
 	raise Exception('Gemini failed after retries')
-
-
-def dedup_papers(papers):
-	seen, unique = set(), []
-	for p in papers:
-		pid = p.get('paperId') or p.get('title', '')
-		if pid not in seen:
-			seen.add(pid)
-			unique.append(p)
-	return unique
 
 
 def parse_gemini_scores(response_text):
