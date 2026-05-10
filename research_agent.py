@@ -94,6 +94,43 @@ def gemini(prompt, retries=3):
 	raise Exception('Gemini failed after retries')
 
 
+def dedup_papers(papers):
+	seen, unique = set(), []
+	for p in papers:
+		pid = p.get('paperId') or p.get('title', '')
+		if pid not in seen:
+			seen.add(pid)
+			unique.append(p)
+	return unique
+
+
+def parse_gemini_scores(response_text):
+	cleaned = response_text.replace('```json', '').replace('```', '').strip()
+	return json.loads(cleaned)
+
+
+def apply_scores(papers, scores, threshold):
+	results_by_index = {r['index']: r for r in scores}
+	enriched = []
+	for i, paper in enumerate(papers):
+		title = paper.get('title', '')[:60]
+		data = results_by_index.get(i)
+		if data is None:
+			print(f'Missing result for [{i}]: {title}')
+			continue
+		score = data.get('relevance_score', 0)
+		if score < threshold:
+			print(f' Dropped (score {score}/10): {title}')
+			continue
+		paper['ai_score'] = score
+		paper['ai_reason'] = data['relevance_reason']
+		paper['ai_summary'] = data['summary']
+		paper['ai_contribution'] = data['key_contribution']
+		print(f'Kept (score {score}/10): {title}')
+		enriched.append(paper)
+	return enriched
+
+
 def score_and_summarise(papers):
 	if not papers:
 		return []
@@ -143,36 +180,12 @@ def _score_chunk(papers):
 
 	try:
 		response = gemini(prompt)
-		response = response.replace('```json', '').replace('```', '').strip()
-		results = json.loads(response)
+		results = parse_gemini_scores(response)
 	except Exception as e:
 		print(f'Batch Gemini error: {e}')
 		return []
 
-	enriched = []
-	results_by_index = {r['index']: r for r in results}
-
-	for i, paper in enumerate(papers):
-		title = paper.get('title', '')[:60]
-		data = results_by_index.get(i)
-
-		if data is None:
-			print(f'Missing result for [{i}]: {title}')
-			continue
-
-		score = data.get('relevance_score', 0)
-		if score < RELEVANCE_THRESHOLD:
-			print(f' Dropped (score {score}/10): {title}')
-			continue
-
-		paper['ai_score'] = score
-		paper['ai_reason'] = data['relevance_reason']
-		paper['ai_summary'] = data['summary']
-		paper['ai_contribution'] = data['key_contribution']
-		print(f'Kept (score {score}/10): {title}')
-		enriched.append(paper)
-
-	return enriched
+	return apply_scores(papers, results, RELEVANCE_THRESHOLD)
 
 
 S = {
@@ -337,12 +350,7 @@ def main():
 		print(f'\nSearching: {query}')
 		all_papers.extend(fetch_papers(query))
 
-	seen, unique = set(), []
-	for p in all_papers:
-		pid = p.get('paperId') or p.get('title', '')
-		if pid not in seen:
-			seen.add(pid)
-			unique.append(p)
+	unique = dedup_papers(all_papers)
 
 	print(f'{len(unique)} unique papers found. Scoring\n')
 
