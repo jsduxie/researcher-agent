@@ -32,3 +32,12 @@ def test_gemini_call_warn_threshold_is_positive_int():
 	assert isinstance(config.GEMINI_CALL_WARN_THRESHOLD, int)
 	assert not isinstance(config.GEMINI_CALL_WARN_THRESHOLD, bool)
 	assert config.GEMINI_CALL_WARN_THRESHOLD > 0
+
+
+# -- PDF_MAX_SIZE_MB --
+
+
+def test_pdf_max_size_mb_is_positive_int():
+	assert isinstance(config.PDF_MAX_SIZE_MB, int)
+	assert not isinstance(config.PDF_MAX_SIZE_MB, bool)
+	assert config.PDF_MAX_SIZE_MB > 0

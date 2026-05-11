@@ -1,9 +1,19 @@
 import json
 
 import pytest
+import requests
+import responses
 
 import summariser
-from summariser import MISSING_FIELD_PLACEHOLDER, MODEL_VERSION, parse_summary_response, summarise_paper
+from summariser import (
+	MISSING_FIELD_PLACEHOLDER,
+	MODEL_VERSION,
+	download_pdf,
+	generate_with_file,
+	parse_summary_response,
+	summarise_paper,
+	upload_pdf_to_gemini,
+)
 
 
 def _valid_response(**overrides):
@@ -121,6 +131,7 @@ def test_summarise_paper_skips_cache_check_when_no_paper_id(mocker):
 
 	get_summary.assert_not_called()
 	upsert.assert_not_called()
+	assert result is not None
 	assert result['methodology'] == 'method'
 
 
@@ -246,6 +257,7 @@ def test_summarise_paper_persists_partial_response_with_placeholders(mocker):
 
 	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
 
+	assert result is not None
 	assert result['limitations'] == MISSING_FIELD_PLACEHOLDER
 	upsert.assert_called_once()
 	assert upsert.call_args.args[2]['limitations'] == MISSING_FIELD_PLACEHOLDER
@@ -269,3 +281,356 @@ def test_module_version_is_set():
 	# Persisted alongside summaries so a later prompt or model change can be reasoned
 	# about against historical data.
 	assert summariser.MODEL_VERSION
+
+
+# -- download_pdf --
+
+
+PDF_URL = 'https://example.com/paper.pdf'
+
+
+@responses.activate
+def test_download_pdf_returns_bytes_on_happy_path():
+	responses.get(PDF_URL, body=b'%PDF-1.4 content')
+	assert download_pdf(PDF_URL, max_size_bytes=1024) == b'%PDF-1.4 content'
+
+
+def test_download_pdf_raises_when_declared_content_length_exceeds_cap(mocker):
+	# Isolates the declared-size check from the stream check: a streamed `responses`
+	# body does not surface Content-Length on `r.headers`, so direct-mock the response.
+	mock_response = mocker.MagicMock()
+	mock_response.__enter__.return_value = mock_response
+	mock_response.headers = {'Content-Length': '200'}
+	mocker.patch('summariser.requests.get', return_value=mock_response)
+	with pytest.raises(ValueError, match='declared size .* exceeds cap'):
+		download_pdf(PDF_URL, max_size_bytes=100)
+
+
+def test_download_pdf_raises_when_stream_exceeds_cap(mocker):
+	# Simulates a server that lies about (or omits) Content-Length. The stream check
+	# is the safety net; it must fire before the buffer eats unbounded memory.
+	mock_response = mocker.MagicMock()
+	mock_response.__enter__.return_value = mock_response
+	mock_response.headers = {}
+	mock_response.iter_content.return_value = iter([b'x' * 60, b'x' * 60])
+	mocker.patch('summariser.requests.get', return_value=mock_response)
+	with pytest.raises(ValueError, match='stream exceeded cap'):
+		download_pdf(PDF_URL, max_size_bytes=100)
+
+
+def test_download_pdf_ignores_non_numeric_declared_content_length(mocker):
+	# A non-digit Content-Length must not crash; we fall through to the stream check.
+	mock_response = mocker.MagicMock()
+	mock_response.__enter__.return_value = mock_response
+	mock_response.headers = {'Content-Length': 'unknown'}
+	mock_response.iter_content.return_value = iter([b'small'])
+	mocker.patch('summariser.requests.get', return_value=mock_response)
+	assert download_pdf(PDF_URL, max_size_bytes=100) == b'small'
+
+
+@responses.activate
+def test_download_pdf_propagates_http_error():
+	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
+	with pytest.raises(requests.HTTPError):
+		download_pdf(PDF_URL, max_size_bytes=1024)
+
+
+# -- upload_pdf_to_gemini --
+
+
+UPLOAD_TARGET = 'https://upload.example.com/sessions/abc'
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'https://files/abc', 'name': 'files/abc'}})
+	assert upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'fake-key') == 'https://files/abc'
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_sends_api_key_on_start_request():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
+	upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'my-key')
+	assert 'key=my-key' in responses.calls[0].request.url
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_sends_display_name_in_metadata():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
+	upload_pdf_to_gemini(b'pdf', 'a-paper.pdf', 'k')
+	start_body = json.loads(responses.calls[0].request.body)
+	assert start_body == {'file': {'display_name': 'a-paper.pdf'}}
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_propagates_start_http_error():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
+	with pytest.raises(requests.HTTPError):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_raises_when_no_upload_url_header():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={})
+	with pytest.raises(ValueError, match='X-Goog-Upload-URL'):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_propagates_upload_http_error():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={}, status=500)
+	with pytest.raises(requests.HTTPError):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_raises_when_response_missing_file_uri():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {}})
+	with pytest.raises(ValueError, match='missing file.uri'):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_raises_when_file_key_missing():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={})
+	with pytest.raises(ValueError, match='missing file.uri'):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+# -- generate_with_file --
+
+
+@responses.activate
+def test_generate_with_file_returns_text_on_happy_path():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert generate_with_file('prompt', 'files/abc', 'k') == 'ok'
+
+
+@responses.activate
+def test_generate_with_file_strips_response_whitespace():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': '  ok  '}]}}]})
+	assert generate_with_file('prompt', 'files/abc', 'k') == 'ok'
+
+
+@responses.activate
+def test_generate_with_file_sends_file_data_and_prompt_parts():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	generate_with_file('the-prompt', 'files/abc', 'k')
+	body = json.loads(responses.calls[0].request.body)
+	parts = body['contents'][0]['parts']
+	assert parts[0] == {'file_data': {'mime_type': 'application/pdf', 'file_uri': 'files/abc'}}
+	assert parts[1] == {'text': 'the-prompt'}
+
+
+@responses.activate
+def test_generate_with_file_propagates_http_error():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	with pytest.raises(requests.HTTPError):
+		generate_with_file('p', 'files/abc', 'k')
+
+
+@responses.activate
+def test_generate_with_file_raises_when_candidates_missing():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		generate_with_file('p', 'files/abc', 'k')
+
+
+@responses.activate
+def test_generate_with_file_raises_when_candidates_empty():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': []})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		generate_with_file('p', 'files/abc', 'k')
+
+
+@responses.activate
+def test_generate_with_file_raises_when_text_field_missing():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
+	with pytest.raises(ValueError, match='missing expected fields'):
+		generate_with_file('p', 'files/abc', 'k')
+
+
+# -- summarise_paper: PDF path integration --
+
+
+def _mock_pdf_pipeline(*, gemini_text=None, upload_url=UPLOAD_TARGET, file_uri='files/abc'):
+	"""Stand up the three HTTP boundaries the PDF path uses with happy-path defaults."""
+	if gemini_text is None:
+		gemini_text = _valid_response()
+	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': upload_url})
+	responses.post(upload_url, json={'file': {'uri': file_uri}})
+	responses.post(
+		summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': gemini_text}]}}]}
+	)
+
+
+@responses.activate
+def test_summarise_paper_pdf_path_returns_four_fields(mocker):
+	_mock_pdf_pipeline()
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock()
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'title': 'T', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
+	# PDF path was used, so the abstract-mode callable must not have been invoked.
+	gemini_fn.assert_not_called()
+
+
+@responses.activate
+def test_summarise_paper_pdf_path_persists_summary(mocker):
+	_mock_pdf_pipeline()
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	conn = mocker.MagicMock()
+
+	summarise_paper(
+		{'paperId': 'p1', 'title': 'T', 'openAccessPdf': {'url': PDF_URL}}, mocker.Mock(), conn=conn, api_key='fake-key'
+	)
+
+	upsert.assert_called_once()
+	call = upsert.call_args
+	assert call.args[1] == 'p1'
+	assert call.args[2]['methodology'] == 'method'
+	assert call.args[3] == MODEL_VERSION
+
+
+@responses.activate
+def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, capsys):
+	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result is not None
+	assert result['methodology'] == 'method'
+	gemini_fn.assert_called_once()
+	assert 'falling back to abstract' in capsys.readouterr().out
+
+
+@responses.activate
+def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
+	responses.get(PDF_URL, body=b'pdf')
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result is not None
+	gemini_fn.assert_called_once()
+
+
+@responses.activate
+def test_summarise_paper_falls_back_when_generate_fails(mocker):
+	responses.get(PDF_URL, body=b'pdf')
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result is not None
+	gemini_fn.assert_called_once()
+
+
+@responses.activate
+def test_summarise_paper_falls_back_when_pdf_response_is_malformed(mocker):
+	_mock_pdf_pipeline(gemini_text='not json at all')
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result is not None
+	gemini_fn.assert_called_once()
+
+
+@responses.activate
+def test_summarise_paper_returns_none_when_pdf_fails_and_no_abstract(mocker):
+	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock()
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, conn=mocker.MagicMock(), api_key='fake-key'
+	)
+
+	assert result is None
+	upsert.assert_not_called()
+
+
+def test_summarise_paper_skips_pdf_path_when_no_api_key(mocker):
+	# Without an api_key the PDF path can't authenticate, so we go straight to the
+	# abstract path rather than burn the download trying.
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	get_request = mocker.patch('summariser.requests.get')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, conn=mocker.MagicMock()
+	)
+
+	assert result is not None
+	get_request.assert_not_called()
+	gemini_fn.assert_called_once()
+
+
+def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
+	cached = {'methodology': 'cached', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+	mocker.patch('summariser.db.get_summary', return_value=cached)
+	get_request = mocker.patch('summariser.requests.get')
+	gemini_fn = mocker.Mock()
+
+	result = summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+	)
+
+	assert result == cached
+	get_request.assert_not_called()
+	gemini_fn.assert_not_called()
