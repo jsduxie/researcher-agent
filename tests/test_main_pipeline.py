@@ -35,6 +35,10 @@ def mock_io(mocker):
 		'score': mocker.patch(
 			'main.scorer.score_and_summarise', return_value=([{'paperId': 'p1', 'ai_score': 8}], {'p1'})
 		),
+		'summarise': mocker.patch(
+			'main.summariser.summarise_paper',
+			return_value={'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'},
+		),
 		'send': mocker.patch('main.emailer.send_email'),
 	}
 
@@ -200,17 +204,139 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 	assert 'Dropped 2 paper(s) without paperId' in capsys.readouterr().out
 
 
-# -- gemini wrapper --
+# -- gemini wrappers --
 
 
-def test_gemini_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
+def test_gemini_score_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
 	# Orchestration tests mock scorer.score_and_summarise wholesale, so the live-mode
-	# branch of main._gemini (the callable passed to the scorer) is never exercised
-	# end-to-end. Cover it directly.
+	# branch of main._gemini_score (the callable passed to the scorer) is never
+	# exercised end-to-end. Cover it directly.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='gemini json')
 
-	result = main._gemini('prompt text')
+	result = main._gemini_score('prompt text')
 
 	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3)
 	assert result == 'gemini json'
+
+
+def test_gemini_summarise_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
+	# Same as above for the summariser-facing wrapper, which routes prompt-only
+	# summariser calls through the same generateContent endpoint.
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='summary json')
+
+	result = main._gemini_summarise('prompt text')
+
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3)
+	assert result == 'summary json'
+
+
+def test_gemini_score_wrapper_increments_call_count(monkeypatch):
+	monkeypatch.setattr(main, 'DRY_RUN', True)
+	main.GEMINI_CALL_COUNT = 0
+	main._gemini_score('prompt')
+	main._gemini_score('prompt')
+	assert main.GEMINI_CALL_COUNT == 2
+
+
+def test_record_gemini_call_increments_count(monkeypatch):
+	main.GEMINI_CALL_COUNT = 0
+	main._record_gemini_call()
+	main._record_gemini_call()
+	main._record_gemini_call()
+	assert main.GEMINI_CALL_COUNT == 3
+
+
+# -- summariser orchestration --
+
+
+def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
+	main.main([])
+	mock_io['summarise'].assert_called_once()
+	call = mock_io['summarise'].call_args
+	assert call.args[0]['paperId'] == 'p1'
+	# Wired with the summariser-specific gemini wrapper, db connection, api_key, and
+	# the call-count recorder.
+	assert call.args[1] is main._gemini_summarise
+	assert call.kwargs['conn'] is mock_db['conn']
+	assert call.kwargs['api_key'] == 'fake'
+	assert call.kwargs['on_gemini_call'] is main._record_gemini_call
+
+
+def test_live_run_summarises_only_papers_above_threshold(mock_db, mock_io):
+	# Scorer returns a single enriched paper; even if more papers were scored,
+	# only those that made it past the relevance filter should be summarised.
+	mock_io['score'].return_value = ([{'paperId': 'kept', 'ai_score': 8}], {'kept', 'dropped'})
+	main.main([])
+	mock_io['summarise'].assert_called_once()
+	assert mock_io['summarise'].call_args.args[0]['paperId'] == 'kept'
+
+
+def test_live_run_does_not_summarise_when_no_papers_kept(mock_db, mock_io):
+	mock_io['score'].return_value = ([], set())
+	main.main([])
+	mock_io['summarise'].assert_not_called()
+
+
+def test_live_run_attaches_summary_fields_to_paper(mock_db, mock_io):
+	main.main([])
+	# After summarise_paper returns the four-field dict, the paper passed to the
+	# email builder should carry those fields. Verify via the dict that was emailed.
+	emailed_paper = mock_io['summarise'].call_args.args[0]
+	assert emailed_paper['methodology'] == 'm'
+	assert emailed_paper['findings'] == 'f'
+	assert emailed_paper['relevance'] == 'r'
+	assert emailed_paper['limitations'] == 'l'
+
+
+def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
+	# A complete summariser failure for a paper must not break the run; the email
+	# still goes out and the run still finishes.
+	mock_io['summarise'].return_value = None
+	main.main([])
+	mock_io['send'].assert_called_once()
+	mock_db['finish_run'].assert_called_once()
+
+
+# -- gemini call count + warning --
+
+
+def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
+	# The on_gemini_call callback fires inside summariser; simulate it firing on each
+	# summarise_paper call to confirm main accumulates the count.
+	def fake_summarise(paper, gemini_fn, conn, api_key, on_gemini_call):
+		on_gemini_call()
+		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+
+	mock_io['summarise'].side_effect = fake_summarise
+	main.main([])
+	out = capsys.readouterr().out
+	assert 'Total Gemini calls this run:' in out
+
+
+def test_live_run_warns_when_gemini_call_count_exceeds_threshold(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.GEMINI_CALL_WARN_THRESHOLD', 0)
+
+	def fake_summarise(paper, gemini_fn, conn, api_key, on_gemini_call):
+		on_gemini_call()
+
+	mock_io['summarise'].side_effect = fake_summarise
+	main.main([])
+	assert 'WARNING: Gemini call count' in capsys.readouterr().out
+
+
+def test_live_run_does_not_warn_when_gemini_call_count_under_threshold(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.GEMINI_CALL_WARN_THRESHOLD', 1_000_000)
+	main.main([])
+	assert 'WARNING' not in capsys.readouterr().out
+
+
+def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
+	# A stale counter from a prior run would cause spurious warnings on the next.
+	main.GEMINI_CALL_COUNT = 999
+	main.main([])
+	# After the run, count reflects only this run's calls (scorer is mocked so it
+	# didn't go through _gemini_score; summariser was mocked so no on_gemini_call
+	# fired). Net result: count is back to 0 plus whatever the mocks triggered.
+	assert main.GEMINI_CALL_COUNT < 999

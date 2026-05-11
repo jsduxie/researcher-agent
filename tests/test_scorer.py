@@ -389,7 +389,7 @@ def test_apply_scores_responded_includes_below_threshold_papers():
 
 
 def test_apply_scores_responded_includes_papers_with_missing_text_fields():
-	# Numeric score present but text fields missing — still counts as responded.
+	# Numeric score present but text fields missing; still counts as responded.
 	# Gemini gave us what it could; no point retrying.
 	papers = [{'paperId': 'p1', 'title': 'p1'}]
 	scores = [{'index': 0, 'relevance_score': 8, 'summary': 's', 'key_contribution': 'k'}]  # no relevance_reason

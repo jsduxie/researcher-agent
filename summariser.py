@@ -20,7 +20,7 @@ _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
 
-def summarise_paper(paper, gemini_fn, conn=None, api_key=None):
+def summarise_paper(paper, gemini_fn, conn=None, api_key=None, on_gemini_call=None):
 	paper_id = paper.get('paperId')
 	title = (paper.get('title') or '')[:60]
 
@@ -33,10 +33,10 @@ def summarise_paper(paper, gemini_fn, conn=None, api_key=None):
 	fields = None
 	pdf_url = (paper.get('openAccessPdf') or {}).get('url')
 	if pdf_url and api_key:
-		fields = _summarise_via_pdf(title, pdf_url, api_key)
+		fields = _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call)
 
 	if fields is None:
-		fields = _summarise_via_abstract(paper, gemini_fn)
+		fields = _summarise_via_abstract(paper, gemini_fn, on_gemini_call)
 
 	if fields is None:
 		return None
@@ -47,7 +47,7 @@ def summarise_paper(paper, gemini_fn, conn=None, api_key=None):
 	return fields
 
 
-def _summarise_via_pdf(title, pdf_url, api_key):
+def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 	try:
 		max_bytes = PDF_MAX_SIZE_MB * 1024 * 1024
 		pdf_bytes = download_pdf(pdf_url, max_bytes)
@@ -55,13 +55,17 @@ def _summarise_via_pdf(title, pdf_url, api_key):
 		file_uri = upload_pdf_to_gemini(pdf_bytes, display_name, api_key)
 		prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material='See the attached PDF.')
 		response = generate_with_file(prompt, file_uri, api_key)
+		# Fire the counter only after the call returned a body; network errors before
+		# this point did not consume model quota.
+		if on_gemini_call:
+			on_gemini_call()
 		return parse_summary_response(response)
 	except Exception as e:
 		print(f'PDF summariser failed for "{title}": {e}; falling back to abstract')
 		return None
 
 
-def _summarise_via_abstract(paper, gemini_fn):
+def _summarise_via_abstract(paper, gemini_fn, on_gemini_call):
 	title = (paper.get('title') or '')[:60]
 	abstract = paper.get('abstract')
 	if not abstract:
@@ -71,6 +75,8 @@ def _summarise_via_abstract(paper, gemini_fn):
 	prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material=source_material)
 	try:
 		response = gemini_fn(prompt)
+		if on_gemini_call:
+			on_gemini_call()
 		return parse_summary_response(response)
 	except Exception as e:
 		print(f'Summariser Gemini error for "{title}": {e}')
