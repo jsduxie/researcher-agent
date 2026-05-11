@@ -300,3 +300,72 @@ def test_mark_scoring_results_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('update boom')
 	with pytest.raises(RuntimeError, match='update boom'):
 		db.mark_scoring_results(mock_conn, attempted=['p1'], responded={'p1'})
+
+
+# -- get_summary --
+
+
+def test_get_summary_returns_dict_when_row_present(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = ('m', 'f', 'r', 'l', 'gemini-2.5-flash')
+	result = db.get_summary(mock_conn, 'abc')
+	call = _cursor(mock_conn).execute.call_args
+	assert 'SELECT methodology, findings, relevance, limitations, model_version FROM summaries' in call.args[0]
+	assert 'paper_id = %s' in call.args[0]
+	assert call.args[1] == ('abc',)
+	assert result == {
+		'methodology': 'm',
+		'findings': 'f',
+		'relevance': 'r',
+		'limitations': 'l',
+		'model_version': 'gemini-2.5-flash',
+	}
+
+
+def test_get_summary_returns_none_when_no_row(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = None
+	assert db.get_summary(mock_conn, 'abc') is None
+
+
+def test_get_summary_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.get_summary(mock_conn, 'abc')
+
+
+# -- upsert_summary --
+
+
+def test_upsert_summary_uses_insert_on_conflict(mock_conn):
+	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+	db.upsert_summary(mock_conn, 'abc', fields, 'gemini-2.5-flash')
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'INSERT INTO summaries' in sql
+	assert 'ON CONFLICT (paper_id) DO UPDATE' in sql
+
+
+def test_upsert_summary_binds_all_fields_in_order(mock_conn):
+	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+	db.upsert_summary(mock_conn, 'abc', fields, 'gemini-2.5-flash')
+	params = _cursor(mock_conn).execute.call_args.args[1]
+	assert params == ('abc', 'm', 'f', 'r', 'l', 'gemini-2.5-flash')
+
+
+def test_upsert_summary_binds_none_for_missing_field_keys(mock_conn):
+	# A field absent from the dict should bind NULL rather than raise. Callers using a
+	# placeholder string ("Not available from this source.") will provide the key; this
+	# guards against a partial Gemini response with keys missing entirely.
+	db.upsert_summary(mock_conn, 'abc', {'methodology': 'm'}, 'gemini-2.5-flash')
+	params = _cursor(mock_conn).execute.call_args.args[1]
+	assert params == ('abc', 'm', None, None, None, 'gemini-2.5-flash')
+
+
+def test_upsert_summary_accepts_none_model_version(mock_conn):
+	db.upsert_summary(mock_conn, 'abc', {}, None)
+	params = _cursor(mock_conn).execute.call_args.args[1]
+	assert params == ('abc', None, None, None, None, None)
+
+
+def test_upsert_summary_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
+	with pytest.raises(RuntimeError, match='write boom'):
+		db.upsert_summary(mock_conn, 'abc', {}, 'gemini-2.5-flash')
