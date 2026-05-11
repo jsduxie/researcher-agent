@@ -26,8 +26,10 @@ RELEVANCE_THRESHOLD = _digest['relevance_threshold']
 DAYS_BACK = _digest['days_back']
 MAX_PER_QUERY = _digest['max_per_query']
 BATCH_SIZE = _digest['batch_size']
+GEMINI_CALL_WARN_THRESHOLD = _digest['gemini_call_warn_threshold']
 
 SCORER_PROMPT = _load_prompt('scorer')
+SUMMARISER_PROMPT = _load_prompt('summariser')
 
 _env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)
 _env.globals['S'] = S
