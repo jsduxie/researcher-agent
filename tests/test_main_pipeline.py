@@ -7,6 +7,7 @@ import main
 def env(monkeypatch):
 	monkeypatch.setenv('DATABASE_URL', 'postgresql://fake')
 	monkeypatch.setenv('GEMINI_API_KEY', 'fake')
+	monkeypatch.setenv('SEMANTIC_SCHOLAR_API_KEY', 'fake-ss')
 	monkeypatch.setenv('GMAIL_USER', 'u')
 	monkeypatch.setenv('GMAIL_APP_PASSWORD', 'p')
 	monkeypatch.setenv('EMAIL_TO', 'to@x')
@@ -171,6 +172,24 @@ def test_live_run_swallows_fetch_error_and_finishes_run(mock_db, mock_io, mocker
 	mock_db['finish_run'].assert_called_once()
 	mock_io['send'].assert_not_called()
 	assert 'Error fetching' in capsys.readouterr().out
+
+
+def test_live_run_exits_when_semantic_scholar_api_key_missing(monkeypatch, mock_db, mock_io):
+	monkeypatch.delenv('SEMANTIC_SCHOLAR_API_KEY', raising=False)
+
+	with pytest.raises(SystemExit) as exc:
+		main.main([])
+
+	assert 'SEMANTIC_SCHOLAR_API_KEY' in str(exc.value)
+	mock_db['connect'].assert_not_called()
+	mock_io['fetch'].assert_not_called()
+
+
+def test_live_run_passes_api_key_to_fetch_papers(mock_db, mock_io):
+	main.main([])
+	# Every call to fetch_papers must carry the key sourced from the env.
+	for call in mock_io['fetch'].call_args_list:
+		assert call.args[1] == 'fake-ss'
 
 
 def test_live_run_propagates_when_scorer_raises_unhandled(mock_db, mock_io):

@@ -83,19 +83,19 @@ def test_cutoff_year(today, days_back, expected):
 @responses.activate
 def test_fetch_papers_returns_data_list_on_happy_path():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': [{'paperId': 'a'}, {'paperId': 'b'}]})
-	assert fetch_papers('attention') == [{'paperId': 'a'}, {'paperId': 'b'}]
+	assert fetch_papers('attention', 'test-key') == [{'paperId': 'a'}, {'paperId': 'b'}]
 
 
 @responses.activate
 def test_fetch_papers_returns_empty_list_when_data_is_empty():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	assert fetch_papers('query') == []
+	assert fetch_papers('query', 'test-key') == []
 
 
 @responses.activate
 def test_fetch_papers_returns_empty_list_when_data_key_missing():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={})
-	assert fetch_papers('query') == []
+	assert fetch_papers('query', 'test-key') == []
 
 
 @responses.activate
@@ -103,7 +103,7 @@ def test_fetch_papers_raises_when_500_persists():
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'error': 'oops'}, status=500)
 	with pytest.raises(FetchError):
-		fetch_papers('query')
+		fetch_papers('query', 'test-key')
 	assert len(responses.calls) == 4
 
 
@@ -112,7 +112,7 @@ def test_fetch_papers_raises_when_connection_error_persists():
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.ConnectionError('boom'))
 	with pytest.raises(FetchError):
-		fetch_papers('query')
+		fetch_papers('query', 'test-key')
 	assert len(responses.calls) == 4
 
 
@@ -121,7 +121,7 @@ def test_fetch_papers_raises_when_timeout_persists():
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.Timeout('slow'))
 	with pytest.raises(FetchError):
-		fetch_papers('query')
+		fetch_papers('query', 'test-key')
 	assert len(responses.calls) == 4
 
 
@@ -132,7 +132,7 @@ def test_fetch_papers_raises_when_timeout_persists():
 def test_fetch_papers_retries_on_429_then_succeeds():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': [{'paperId': 'a'}]})
-	assert fetch_papers('q') == [{'paperId': 'a'}]
+	assert fetch_papers('q', 'test-key') == [{'paperId': 'a'}]
 	assert len(responses.calls) == 2
 
 
@@ -140,7 +140,7 @@ def test_fetch_papers_retries_on_429_then_succeeds():
 def test_fetch_papers_retries_on_500_then_succeeds():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=500)
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': [{'paperId': 'a'}]})
-	assert fetch_papers('q') == [{'paperId': 'a'}]
+	assert fetch_papers('q', 'test-key') == [{'paperId': 'a'}]
 	assert len(responses.calls) == 2
 
 
@@ -148,7 +148,7 @@ def test_fetch_papers_retries_on_500_then_succeeds():
 def test_fetch_papers_honours_retry_after_seconds(_no_sleep):
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429, headers={'Retry-After': '7'})
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('q')
+	fetch_papers('q', 'test-key')
 	# 2s pre-call sleep, then 7s honoured from Retry-After instead of the 5s default.
 	delays = [c.args[0] for c in _no_sleep.call_args_list]
 	assert delays == [2, 7]
@@ -159,7 +159,7 @@ def test_fetch_papers_ignores_non_integer_retry_after(_no_sleep):
 	# HTTP-date form is unsupported and falls back to the default backoff schedule.
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429, headers={'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT'})
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('q')
+	fetch_papers('q', 'test-key')
 	delays = [c.args[0] for c in _no_sleep.call_args_list]
 	assert delays == [2, 5]
 
@@ -169,7 +169,7 @@ def test_fetch_papers_raises_when_retries_exhausted():
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
 	with pytest.raises(FetchError):
-		fetch_papers('q')
+		fetch_papers('q', 'test-key')
 	assert len(responses.calls) == 4
 
 
@@ -177,7 +177,7 @@ def test_fetch_papers_raises_when_retries_exhausted():
 def test_fetch_papers_does_not_retry_on_404():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=404)
 	with pytest.raises(FetchError):
-		fetch_papers('q')
+		fetch_papers('q', 'test-key')
 	assert len(responses.calls) == 1
 
 
@@ -186,15 +186,35 @@ def test_fetch_papers_backoff_uses_expected_delays(_no_sleep):
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
 	with pytest.raises(FetchError):
-		fetch_papers('q')
+		fetch_papers('q', 'test-key')
 	delays = [c.args[0] for c in _no_sleep.call_args_list]
 	assert delays == [2, 5, 15, 45]
+
+
+# -- api key header --
+
+
+@responses.activate
+def test_fetch_papers_sends_x_api_key_header():
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
+	fetch_papers('q', 'secret-key')
+	assert responses.calls[0].request.headers['x-api-key'] == 'secret-key'
+
+
+@responses.activate
+def test_fetch_papers_sends_x_api_key_header_on_every_retry():
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
+	fetch_papers('q', 'secret-key')
+	for call in responses.calls:
+		assert call.request.headers['x-api-key'] == 'secret-key'
 
 
 @responses.activate
 def test_fetch_papers_forwards_query_param():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('attention is all you need')
+	fetch_papers('attention is all you need', 'test-key')
 	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
 	assert qs['query'] == ['attention is all you need']
 
@@ -202,7 +222,7 @@ def test_fetch_papers_forwards_query_param():
 @responses.activate
 def test_fetch_papers_sends_limit_from_config():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('q')
+	fetch_papers('q', 'test-key')
 	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
 	assert qs['limit'] == [str(fetcher.MAX_PER_QUERY)]
 
@@ -210,7 +230,7 @@ def test_fetch_papers_sends_limit_from_config():
 @responses.activate
 def test_fetch_papers_publication_date_param_is_year_shaped():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('q')
+	fetch_papers('q', 'test-key')
 	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
 	value = qs['publicationDateOrYear'][0]
 	assert value.endswith('-')
@@ -221,7 +241,7 @@ def test_fetch_papers_publication_date_param_is_year_shaped():
 @responses.activate
 def test_fetch_papers_sends_expected_fields():
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
-	fetch_papers('q')
+	fetch_papers('q', 'test-key')
 	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
 	expected = {
 		'title',

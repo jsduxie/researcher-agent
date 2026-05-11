@@ -4,6 +4,21 @@
 
 Daily research-paper digest. Fetches Semantic Scholar results, scores and summarises them with Gemini, emails the digest. Portfolio project tied to an MEng thesis on mental health classification and explainability.
 
+## Environment variables
+
+Copy `.env.example` to `.env` for local use. Every variable except `DATABASE_URL_TEST` and `CODECOV_TOKEN` is required by the cron run.
+
+| Variable | Required | Where it's used | Notes |
+|---|---|---|---|
+| `SEMANTIC_SCHOLAR_API_KEY` | yes | `fetcher.py` | Sent as `x-api-key` on every Semantic Scholar request. Free; request at https://www.semanticscholar.org/product/api |
+| `GEMINI_API_KEY` | yes | `scorer.py`, `summariser.py` | Free tier of Gemini Flash |
+| `GMAIL_USER` | yes | `emailer.py` | Sender Gmail address |
+| `GMAIL_APP_PASSWORD` | yes | `emailer.py` | Google account app password (not the login password) |
+| `EMAIL_TO` | yes | `emailer.py` | Recipient address |
+| `DATABASE_URL` | yes | `db.py`, `main.py` | Neon Postgres connection string |
+| `DATABASE_URL_TEST` | tests only | `tests/` | Separate Neon branch for `pytest -m integration` |
+| `CODECOV_TOKEN` | CI only | GitHub Actions | Upload step in the workflow |
+
 ## Running tests with coverage
 
 Install dev dependencies:
