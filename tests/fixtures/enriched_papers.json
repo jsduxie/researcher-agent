@@ -12,8 +12,10 @@
 		"publicationDate": "2024-06-15",
 		"ai_score": 9,
 		"ai_reason": "Directly relevant to BPD detection from social media.",
-		"ai_summary": "The authors fine-tune a transformer on Reddit posts to detect BPD markers, achieving strong baseline performance.",
-		"ai_contribution": "Demonstrates transformer-based BPD detection on Reddit data."
+		"methodology": "The authors fine-tune a transformer-based model on a Reddit corpus, evaluating against a held-out test set drawn from BPD-related subreddits.",
+		"findings": "The model achieves competitive recall and precision against a CNN baseline, with attention visualisations highlighting affective language as the strongest predictive signal.",
+		"relevance": "Directly relevant to the student's BPD detection thesis, particularly the use of attention-based architectures on Reddit text.",
+		"limitations": "Single-subreddit training and absence of demographic controls limit generalisability."
 	},
 	{
 		"paperId": "def456",
@@ -28,7 +30,9 @@
 		"publicationDate": "2024-08-20",
 		"ai_score": 7,
 		"ai_reason": "Hierarchical attention work overlaps with the student's HAN extensions.",
-		"ai_summary": "The paper introduces feature-guided attention biases in hierarchical attention networks for clinical NLP tasks.",
-		"ai_contribution": "Provides a recipe for incorporating external features into HAN attention scores."
+		"methodology": "The authors propose feature-guided attention biases injected at both word and sentence level within a hierarchical attention network.",
+		"findings": "Adding the feature bias improves macro-F1 over the HAN baseline across two clinical NLP datasets.",
+		"relevance": "Provides a recipe for incorporating external features into HAN attention scores, directly aligned with the student's MentalBERT HAN work.",
+		"limitations": "Evaluation is restricted to two datasets and the gain over baseline is modest."
 	}
 ]

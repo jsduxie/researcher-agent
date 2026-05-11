@@ -15,7 +15,7 @@ def no_sleep(mocker):
 
 
 def _valid_score(index, score):
-	return {'index': index, 'relevance_score': score, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}
+	return {'index': index, 'relevance_score': score, 'relevance_reason': 'r'}
 
 
 # -- parse_gemini_scores --
@@ -55,8 +55,6 @@ def test_apply_scores_keeps_paper_above_threshold():
 	assert len(enriched) == 1
 	assert enriched[0]['ai_score'] == 8
 	assert enriched[0]['ai_reason'] == 'r'
-	assert enriched[0]['ai_summary'] == 's'
-	assert enriched[0]['ai_contribution'] == 'k'
 
 
 def test_apply_scores_drops_paper_below_threshold():
@@ -89,7 +87,7 @@ def test_apply_scores_empty_scores_with_papers_drops_all():
 
 def test_apply_scores_missing_score_field_drops_paper(capsys):
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=1)
 	assert enriched == []
 	assert 'invalid score' in capsys.readouterr().out
@@ -97,7 +95,7 @@ def test_apply_scores_missing_score_field_drops_paper(capsys):
 
 def test_apply_scores_string_score_drops_paper(capsys):
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': '8', 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': '8', 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert enriched == []
 	assert 'invalid score' in capsys.readouterr().out
@@ -105,7 +103,7 @@ def test_apply_scores_string_score_drops_paper(capsys):
 
 def test_apply_scores_none_score_drops_paper(capsys):
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': None, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': None, 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert enriched == []
 	assert 'invalid score' in capsys.readouterr().out
@@ -115,7 +113,7 @@ def test_apply_scores_bool_score_drops_paper(capsys):
 	# True passes isinstance(_, int) in Python; refuse it explicitly so a stray
 	# boolean from a malformed response can't be promoted to a numeric score.
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': True, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': True, 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=0)
 	assert enriched == []
 	assert 'invalid score' in capsys.readouterr().out
@@ -124,7 +122,7 @@ def test_apply_scores_bool_score_drops_paper(capsys):
 def test_apply_scores_float_score_drops_paper(capsys):
 	# Downstream rendering requires int; refuse floats rather than coerce silently.
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': 8.5, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': 8.5, 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert enriched == []
 	assert 'invalid score' in capsys.readouterr().out
@@ -320,10 +318,7 @@ def test_apply_scores_skips_non_dict_result(capsys):
 
 def test_apply_scores_skips_result_missing_index(capsys):
 	papers = [{'title': 'p1'}, {'title': 'p2'}]
-	scores = [
-		{'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'},
-		_valid_score(1, 8),
-	]
+	scores = [{'relevance_score': 8, 'relevance_reason': 'r'}, _valid_score(1, 8)]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert [p['title'] for p in enriched] == ['p2']
 	assert 'missing or invalid index' in capsys.readouterr().out
@@ -332,41 +327,22 @@ def test_apply_scores_skips_result_missing_index(capsys):
 @pytest.mark.parametrize('idx', ['0', True, 1.5, None])
 def test_apply_scores_skips_result_with_non_int_index(idx, capsys):
 	papers = [{'title': 'p1'}, {'title': 'p2'}]
-	scores = [
-		{'index': idx, 'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'},
-		_valid_score(1, 8),
-	]
+	scores = [{'index': idx, 'relevance_score': 8, 'relevance_reason': 'r'}, _valid_score(1, 8)]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert [p['title'] for p in enriched] == ['p2']
 
 
 def test_apply_scores_drops_paper_when_relevance_reason_missing(capsys):
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': 8, 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': 8}]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert enriched == []
 	assert 'missing fields' in capsys.readouterr().out
 
 
-def test_apply_scores_drops_paper_when_summary_missing(capsys):
+def test_apply_scores_drops_paper_when_relevance_reason_is_non_string(capsys):
 	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': 'r', 'key_contribution': 'k'}]
-	enriched, _ = apply_scores(papers, scores, threshold=6)
-	assert enriched == []
-	assert 'missing fields' in capsys.readouterr().out
-
-
-def test_apply_scores_drops_paper_when_key_contribution_missing(capsys):
-	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': 'r', 'summary': 's'}]
-	enriched, _ = apply_scores(papers, scores, threshold=6)
-	assert enriched == []
-	assert 'missing fields' in capsys.readouterr().out
-
-
-def test_apply_scores_drops_paper_when_required_field_is_non_string(capsys):
-	papers = [{'title': 'p'}]
-	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': None, 'summary': 's', 'key_contribution': 'k'}]
+	scores = [{'index': 0, 'relevance_score': 8, 'relevance_reason': None}]
 	enriched, _ = apply_scores(papers, scores, threshold=6)
 	assert enriched == []
 	assert 'missing fields' in capsys.readouterr().out
@@ -388,11 +364,11 @@ def test_apply_scores_responded_includes_below_threshold_papers():
 	assert responded == {'p1'}
 
 
-def test_apply_scores_responded_includes_papers_with_missing_text_fields():
-	# Numeric score present but text fields missing; still counts as responded.
+def test_apply_scores_responded_includes_papers_with_missing_relevance_reason():
+	# Numeric score present but relevance_reason missing; still counts as responded.
 	# Gemini gave us what it could; no point retrying.
 	papers = [{'paperId': 'p1', 'title': 'p1'}]
-	scores = [{'index': 0, 'relevance_score': 8, 'summary': 's', 'key_contribution': 'k'}]  # no relevance_reason
+	scores = [{'index': 0, 'relevance_score': 8}]
 	_, responded = apply_scores(papers, scores, threshold=6)
 	assert responded == {'p1'}
 
@@ -400,9 +376,7 @@ def test_apply_scores_responded_includes_papers_with_missing_text_fields():
 def test_apply_scores_responded_excludes_papers_with_invalid_score():
 	# Invalid score means Gemini gave us nothing useful for this paper. Retry next run.
 	papers = [{'paperId': 'p1', 'title': 'p1'}]
-	scores = [
-		{'index': 0, 'relevance_score': 'eight', 'relevance_reason': 'r', 'summary': 's', 'key_contribution': 'k'}
-	]
+	scores = [{'index': 0, 'relevance_score': 'eight', 'relevance_reason': 'r'}]
 	_, responded = apply_scores(papers, scores, threshold=6)
 	assert responded == set()
 

@@ -114,8 +114,10 @@ def _full_paper():
 		'year': 2024,
 		'citationCount': 7,
 		'ai_score': 8,
-		'ai_summary': 'sum',
-		'ai_contribution': 'con',
+		'methodology': 'method',
+		'findings': 'find',
+		'relevance': 'rel',
+		'limitations': 'lim',
 		'ai_reason': 'rea',
 		'url': 'https://ss/a',
 	}
@@ -129,8 +131,10 @@ def test_paper_render_data_full_paper_populates_all_fields():
 	assert data['citation_count'] == 7
 	assert data['score_colour_value'] == '#2563eb'
 	assert data['score_display'] == 8
-	assert data['ai_summary'] == 'sum'
-	assert data['ai_contribution'] == 'con'
+	assert data['methodology'] == 'method'
+	assert data['findings'] == 'find'
+	assert data['relevance'] == 'rel'
+	assert data['limitations'] == 'lim'
 	assert data['ai_reason'] == 'rea'
 	assert data['links'] == [{'url': 'https://ss/a', 'label': 'Semantic Scholar'}]
 
@@ -161,10 +165,12 @@ def test_paper_render_data_non_int_score_renders_question_mark():
 	assert data['score_colour_value'] == '#94a3b8'
 
 
-def test_paper_render_data_missing_ai_fields_default_to_empty_strings():
+def test_paper_render_data_missing_summary_fields_default_to_empty_strings():
 	data = _paper_render_data({})
-	assert data['ai_summary'] == ''
-	assert data['ai_contribution'] == ''
+	assert data['methodology'] == ''
+	assert data['findings'] == ''
+	assert data['relevance'] == ''
+	assert data['limitations'] == ''
 	assert data['ai_reason'] == ''
 
 

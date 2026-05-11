@@ -11,9 +11,7 @@ Respond with a JSON array (no markdown, no extra text) where each element has:
 {{
   "index": <integer matching the [i] label>,
   "relevance_score": <integer 1-10>,
-  "relevance_reason": "<one sentence on why it is or is not relevant>",
-  "summary": "<2-3 sentences summarising the paper from the angle of the student's research>",
-  "key_contribution": "<the single most important takeaway for this student>"
+  "relevance_reason": "<one sentence on why it is or is not relevant>"
 }}
 
 Return ONLY the JSON array.

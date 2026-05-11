@@ -37,8 +37,10 @@
       </td>
     </tr></table>
     <div style="{{ S.summary_box }}">
-      <div style="{{ S.summary_text }}"><span style="{{ S.summary_label }}">Summary</span> &mdash; {{ paper.ai_summary }}</div>
-      <div style="{{ S.summary_text_mt }}"><span style="{{ S.summary_label }}">Key takeaway</span> &mdash; {{ paper.ai_contribution }}</div>
+      <div style="{{ S.summary_text }}"><span style="{{ S.summary_label }}">Methodology:</span> {{ paper.methodology }}</div>
+      <div style="{{ S.summary_text_mt }}"><span style="{{ S.summary_label }}">Findings:</span> {{ paper.findings }}</div>
+      <div style="{{ S.summary_text_mt }}"><span style="{{ S.summary_label }}">Relevance:</span> {{ paper.relevance }}</div>
+      <div style="{{ S.summary_text_mt }}"><span style="{{ S.summary_label }}">Limitations:</span> {{ paper.limitations }}</div>
     </div>
     <div style="{{ S.reason }}">{{ paper.ai_reason }}</div>
     {% if paper.links %}

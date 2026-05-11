@@ -9,7 +9,7 @@ from config import BATCH_SIZE, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PRO
 GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
-_REQUIRED_RESULT_FIELDS = ('relevance_reason', 'summary', 'key_contribution')
+_REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 
 
 def gemini(prompt, api_key, retries=3):
@@ -85,8 +85,6 @@ def apply_scores(papers, scores, threshold):
 			continue
 		paper['ai_score'] = score
 		paper['ai_reason'] = data['relevance_reason']
-		paper['ai_summary'] = data['summary']
-		paper['ai_contribution'] = data['key_contribution']
 		print(f'Kept (score {score}/10): {title}')
 		enriched.append(paper)
 	return enriched, responded

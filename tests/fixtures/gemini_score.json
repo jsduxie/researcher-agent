@@ -2,15 +2,11 @@
 	{
 		"index": 0,
 		"relevance_score": 9,
-		"relevance_reason": "Directly relevant to BPD detection from social media.",
-		"summary": "The authors fine-tune a transformer on Reddit posts to detect BPD markers, achieving strong baseline performance.",
-		"key_contribution": "Demonstrates transformer-based BPD detection on Reddit data."
+		"relevance_reason": "Directly relevant to BPD detection from social media."
 	},
 	{
 		"index": 1,
 		"relevance_score": 7,
-		"relevance_reason": "Hierarchical attention work overlaps with the student's HAN extensions.",
-		"summary": "The paper introduces feature-guided attention biases in hierarchical attention networks for clinical NLP tasks.",
-		"key_contribution": "Provides a recipe for incorporating external features into HAN attention scores."
+		"relevance_reason": "Hierarchical attention work overlaps with the student's HAN extensions."
 	}
 ]

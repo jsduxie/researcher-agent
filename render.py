@@ -44,8 +44,10 @@ def _paper_render_data(paper):
 		'citation_count': paper.get('citationCount', 0),
 		'score_colour_value': score_colour(score),
 		'score_display': score if isinstance(score, int) else '?',
-		'ai_summary': paper.get('ai_summary', ''),
-		'ai_contribution': paper.get('ai_contribution', ''),
+		'methodology': paper.get('methodology', ''),
+		'findings': paper.get('findings', ''),
+		'relevance': paper.get('relevance', ''),
+		'limitations': paper.get('limitations', ''),
 		'ai_reason': paper.get('ai_reason', ''),
 		'links': _build_links(paper),
 	}
