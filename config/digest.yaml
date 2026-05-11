@@ -40,3 +40,4 @@ relevance_threshold: 6
 days_back: 14
 max_per_query: 8
 batch_size: 10
+gemini_call_warn_threshold: 100
