@@ -31,8 +31,12 @@ CREATE TABLE IF NOT EXISTS summaries (
 	relevance TEXT,
 	limitations TEXT,
 	model_version TEXT,
-	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent migration for databases created before updated_at existed.
+ALTER TABLE summaries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS runs (
 	id BIGSERIAL PRIMARY KEY,

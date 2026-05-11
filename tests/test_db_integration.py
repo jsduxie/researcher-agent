@@ -306,6 +306,29 @@ def test_mark_scoring_results_noops_on_empty_attempted(conn):
 		assert cur.fetchone() == (0, None)
 
 
+# -- upsert_summary timestamp semantics --
+
+
+def test_upsert_summary_preserves_created_at_across_re_upsert(conn):
+	# A second upsert for the same paper_id must keep the original created_at while
+	# advancing updated_at. Verifies the ON CONFLICT clause does not overwrite the
+	# creation timestamp.
+	db.upsert_paper(conn, {'paperId': 'p1'})
+
+	db.upsert_summary(conn, 'p1', {'methodology': 'first'}, 'v1')
+	with conn.cursor() as cur:
+		cur.execute('SELECT created_at, updated_at FROM summaries WHERE paper_id = %s', ('p1',))
+		first_created, first_updated = cur.fetchone()
+
+	db.upsert_summary(conn, 'p1', {'methodology': 'second'}, 'v2')
+	with conn.cursor() as cur:
+		cur.execute('SELECT created_at, updated_at FROM summaries WHERE paper_id = %s', ('p1',))
+		second_created, second_updated = cur.fetchone()
+
+	assert second_created == first_created
+	assert second_updated >= first_updated
+
+
 # -- orphan-retry acceptance: Gemini-failed papers come back on the next run --
 
 

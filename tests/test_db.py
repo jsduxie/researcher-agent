@@ -343,6 +343,16 @@ def test_upsert_summary_uses_insert_on_conflict(mock_conn):
 	assert 'ON CONFLICT (paper_id) DO UPDATE' in sql
 
 
+def test_upsert_summary_preserves_created_at_on_conflict(mock_conn):
+	# The ON CONFLICT clause must only touch updated_at; otherwise the column
+	# literally named created_at stops representing creation time.
+	db.upsert_summary(mock_conn, 'abc', {}, 'gemini-2.5-flash')
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	do_update_clause = sql.split('DO UPDATE')[1]
+	assert 'updated_at = NOW()' in do_update_clause
+	assert 'created_at' not in do_update_clause
+
+
 def test_upsert_summary_binds_all_fields_in_order(mock_conn):
 	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 	db.upsert_summary(mock_conn, 'abc', fields, 'gemini-2.5-flash')
