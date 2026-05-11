@@ -20,15 +20,15 @@ RETURNING (xmax = 0) AS was_inserted
 """
 
 _UPSERT_SUMMARY_SQL = """
-INSERT INTO summaries (paper_id, methodology, findings, relevance, limitations, model_version, created_at)
-VALUES (%s, %s, %s, %s, %s, %s, NOW())
+INSERT INTO summaries (paper_id, methodology, findings, relevance, limitations, model_version, created_at, updated_at)
+VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
 ON CONFLICT (paper_id) DO UPDATE
 SET methodology = EXCLUDED.methodology,
     findings = EXCLUDED.findings,
     relevance = EXCLUDED.relevance,
     limitations = EXCLUDED.limitations,
     model_version = EXCLUDED.model_version,
-    created_at = NOW()
+    updated_at = NOW()
 """
 
 _SUMMARY_COLUMNS = ('methodology', 'findings', 'relevance', 'limitations', 'model_version')
