@@ -20,11 +20,22 @@ GEMINI_CALL_COUNT = 0
 def _fetch(query, api_key):
 	if DRY_RUN:
 		return json.loads((_FIXTURES / 'papers.json').read_text())
-	try:
-		return fetch_papers(query, api_key)
-	except FetchError as e:
-		print(f'Error fetching "{query}": {e}')
-		return []
+	return fetch_papers(query, api_key)
+
+
+def _collect_papers(api_key):
+	all_papers = []
+	attempted = 0
+	errored = 0
+	for query in SEARCH_QUERIES:
+		print(f'\nSearching: {query}')
+		attempted += 1
+		try:
+			all_papers.extend(_fetch(query, api_key))
+		except FetchError as e:
+			print(f'Error fetching "{query}": {e}')
+			errored += 1
+	return all_papers, attempted, errored
 
 
 def _gemini_score(prompt, retries=3):
@@ -94,10 +105,7 @@ def main(argv=None):
 		conn = db.connect(os.environ['DATABASE_URL'])
 		db.init_schema(conn)
 
-	all_papers = []
-	for query in SEARCH_QUERIES:
-		print(f'\nSearching: {query}')
-		all_papers.extend(_fetch(query, api_key))
+	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
 	unique = dedup_papers(all_papers)
 	# Papers without paperId cannot be persisted (paper_id is the PK) and cannot be
@@ -136,7 +144,10 @@ def main(argv=None):
 
 	# finish_run last so a logging failure never silently skips the email.
 	if conn is not None:
-		db.finish_run(conn, run_id, len(enriched), 0, 0)
+		db.finish_run(conn, run_id, len(enriched), queries_attempted, queries_errored)
+
+	if queries_attempted > 0 and queries_attempted == queries_errored:
+		sys.exit(f'All {queries_attempted} queries errored; no papers retrieved this run.')
 
 
 if __name__ == '__main__':
