@@ -1,0 +1,271 @@
+import json
+
+import pytest
+
+import summariser
+from summariser import MISSING_FIELD_PLACEHOLDER, MODEL_VERSION, parse_summary_response, summarise_paper
+
+
+def _valid_response(**overrides):
+	body = {'methodology': 'method', 'findings': 'find', 'relevance_to_research': 'rel', 'limitations': 'lim'}
+	body.update(overrides)
+	return json.dumps(body)
+
+
+# -- parse_summary_response --
+
+
+def test_parse_returns_four_fields_on_happy_path():
+	result = parse_summary_response(_valid_response())
+	assert result == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
+
+
+def test_parse_strips_markdown_fences():
+	wrapped = f'```json\n{_valid_response()}\n```'
+	assert parse_summary_response(wrapped)['methodology'] == 'method'
+
+
+def test_parse_strips_bare_code_fences():
+	wrapped = f'```\n{_valid_response()}\n```'
+	assert parse_summary_response(wrapped)['methodology'] == 'method'
+
+
+def test_parse_strips_surrounding_whitespace():
+	assert parse_summary_response(f'   \n{_valid_response()}\n   ')['methodology'] == 'method'
+
+
+def test_parse_maps_relevance_to_research_to_relevance_column():
+	# The DB column is `relevance`, the prompt key is `relevance_to_research`.
+	# The mapping has to happen here or the data will silently drop.
+	result = parse_summary_response(_valid_response(relevance_to_research='mapped'))
+	assert result['relevance'] == 'mapped'
+	assert 'relevance_to_research' not in result
+
+
+def test_parse_uses_placeholder_when_field_missing():
+	body = json.dumps({'methodology': 'm', 'findings': 'f', 'limitations': 'l'})  # no relevance
+	result = parse_summary_response(body)
+	assert result['relevance'] == MISSING_FIELD_PLACEHOLDER
+
+
+def test_parse_uses_placeholder_when_field_is_non_string():
+	body = json.dumps({'methodology': None, 'findings': 'f', 'relevance_to_research': 'r', 'limitations': 'l'})
+	result = parse_summary_response(body)
+	assert result['methodology'] == MISSING_FIELD_PLACEHOLDER
+
+
+def test_parse_uses_placeholder_when_field_is_empty_string():
+	result = parse_summary_response(_valid_response(findings=''))
+	assert result['findings'] == MISSING_FIELD_PLACEHOLDER
+
+
+def test_parse_strips_whitespace_from_field_values():
+	result = parse_summary_response(_valid_response(methodology='  spaced  '))
+	assert result['methodology'] == 'spaced'
+
+
+def test_parse_ignores_extra_keys():
+	result = parse_summary_response(_valid_response(extra='ignored'))
+	assert 'extra' not in result
+
+
+def test_parse_raises_on_malformed_json():
+	with pytest.raises(json.JSONDecodeError):
+		parse_summary_response('not valid')
+
+
+def test_parse_raises_when_response_is_a_list():
+	with pytest.raises(ValueError, match='Expected JSON object'):
+		parse_summary_response('[]')
+
+
+def test_parse_raises_when_response_is_a_scalar():
+	with pytest.raises(ValueError, match='Expected JSON object'):
+		parse_summary_response('42')
+
+
+# -- summarise_paper: cache hit --
+
+
+def test_summarise_paper_short_circuits_on_cache_hit(mocker):
+	cached = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l', 'model_version': 'v'}
+	mocker.patch('summariser.db.get_summary', return_value=cached)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock()
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result == cached
+	gemini_fn.assert_not_called()
+	upsert.assert_not_called()
+
+
+def test_summarise_paper_skips_cache_check_when_no_conn(mocker):
+	get_summary = mocker.patch('summariser.db.get_summary')
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=None)
+
+	get_summary.assert_not_called()
+
+
+def test_summarise_paper_skips_cache_check_when_no_paper_id(mocker):
+	# A paper without a paperId can't be keyed in the cache. We still summarise it
+	# (some upstream paths may want a transient summary) but persistence is skipped.
+	get_summary = mocker.patch('summariser.db.get_summary')
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper({'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	get_summary.assert_not_called()
+	upsert.assert_not_called()
+	assert result['methodology'] == 'method'
+
+
+# -- summarise_paper: happy path --
+
+
+def test_summarise_paper_calls_gemini_and_returns_four_fields(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
+	gemini_fn.assert_called_once()
+
+
+def test_summarise_paper_persists_fresh_summary(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	conn = mocker.MagicMock()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=conn)
+
+	upsert.assert_called_once()
+	call = upsert.call_args
+	assert call.args[0] is conn
+	assert call.args[1] == 'p1'
+	assert call.args[2] == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
+	assert call.args[3] == MODEL_VERSION
+
+
+def test_summarise_paper_does_not_persist_when_conn_is_none(mocker):
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=None)
+
+	upsert.assert_not_called()
+
+
+def test_summarise_paper_does_not_persist_when_no_paper_id(mocker):
+	mocker.patch('summariser.db.get_summary')
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	summarise_paper({'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	upsert.assert_not_called()
+
+
+def test_summarise_paper_prompt_includes_abstract_and_context(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	captured = {}
+
+	def fake_gemini(prompt):
+		captured['prompt'] = prompt
+		return _valid_response()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'unique-abstract-text-xyz'}, fake_gemini, conn=mocker.MagicMock())
+
+	assert 'unique-abstract-text-xyz' in captured['prompt']
+	assert 'RESEARCH CONTEXT' in captured['prompt']
+
+
+# -- summarise_paper: failure modes --
+
+
+def test_summarise_paper_returns_none_when_no_abstract(mocker, capsys):
+	get_summary = mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock()
+
+	result = summarise_paper({'paperId': 'p1'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result is None
+	gemini_fn.assert_not_called()
+	upsert.assert_not_called()
+	# Cache miss still happens before we discover no abstract; that's fine.
+	get_summary.assert_called_once()
+	assert 'No abstract available' in capsys.readouterr().out
+
+
+def test_summarise_paper_returns_none_when_abstract_is_empty(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	gemini_fn = mocker.Mock()
+	assert summarise_paper({'paperId': 'p1', 'abstract': ''}, gemini_fn, conn=mocker.MagicMock()) is None
+	gemini_fn.assert_not_called()
+
+
+def test_summarise_paper_returns_none_on_gemini_exception(mocker, capsys):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(side_effect=Exception('rate limit'))
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result is None
+	upsert.assert_not_called()
+	assert 'Summariser Gemini error' in capsys.readouterr().out
+
+
+def test_summarise_paper_returns_none_on_malformed_response(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value='not json at all')
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result is None
+	upsert.assert_not_called()
+
+
+def test_summarise_paper_persists_partial_response_with_placeholders(mocker):
+	# A response missing one field should still be persisted, with the placeholder
+	# in place. This is the abstract-only fallback behaviour the spec calls for.
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	body = json.dumps({'methodology': 'm', 'findings': 'f', 'relevance_to_research': 'r'})  # no limitations
+	gemini_fn = mocker.Mock(return_value=body)
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result['limitations'] == MISSING_FIELD_PLACEHOLDER
+	upsert.assert_called_once()
+	assert upsert.call_args.args[2]['limitations'] == MISSING_FIELD_PLACEHOLDER
+
+
+def test_summarise_paper_handles_paper_with_missing_title(mocker):
+	# The log lines slice title to 60 chars; a missing title must not crash.
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+	assert result is not None
+
+
+# -- module surface --
+
+
+def test_module_version_is_set():
+	# Persisted alongside summaries so a later prompt or model change can be reasoned
+	# about against historical data.
+	assert summariser.MODEL_VERSION
