@@ -83,12 +83,12 @@ def _build_minimal_pdf(body_text):
 # -- Semantic Scholar live --
 
 
+@pytest.mark.skipif(
+	not os.environ.get('SEMANTIC_SCHOLAR_API_KEY'),
+	reason='SEMANTIC_SCHOLAR_API_KEY required for live Semantic Scholar fetch',
+)
 def test_fetch_papers_returns_results_from_semantic_scholar():
-	# Blocked on #16: fetch_papers currently swallows 429s into an empty list, so a
-	# rate-limited cron is indistinguishable from a quiet day. Once #16 adds retry
-	# with backoff and an API key header, remove this skip and let the assertion run.
-	pytest.skip('Blocked on #16: live fetch needs 429 retry/backoff to be reliable')
-	results = fetcher.fetch_papers('transformer attention')
+	results = fetcher.fetch_papers('transformer attention', os.environ['SEMANTIC_SCHOLAR_API_KEY'])
 	assert isinstance(results, list)
 	assert len(results) > 0
 	first = results[0]

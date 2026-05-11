@@ -1,6 +1,7 @@
 import pytest
 
 import main
+from config import SEARCH_QUERIES
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +50,7 @@ def test_live_run_opens_db_initialises_schema_and_brackets_with_run_lifecycle(mo
 	mock_db['connect'].assert_called_once_with('postgresql://fake')
 	mock_db['init_schema'].assert_called_once_with(mock_db['conn'])
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 1)
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1, 0, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1, len(SEARCH_QUERIES), 0)
 
 
 def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
@@ -92,7 +93,7 @@ def test_live_run_does_not_call_mark_scoring_results_when_nothing_needs_scoring(
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
 	mock_io['score'].return_value = ([], set())
 	main.main([])
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, len(SEARCH_QUERIES), 0)
 	mock_io['send'].assert_not_called()
 
 
@@ -157,21 +158,55 @@ def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, 
 	call = mock_db['mark_scoring_results'].call_args
 	assert call.kwargs['attempted'] == ['p1']
 	assert call.kwargs['responded'] == set()
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, len(SEARCH_QUERIES), 0)
 	mock_io['send'].assert_not_called()
 
 
-def test_live_run_swallows_fetch_error_and_finishes_run(mock_db, mock_io, mocker, capsys):
+def test_live_run_exits_nonzero_when_all_queries_error(mock_db, mock_io, mocker, capsys):
 	from fetcher import FetchError
 
 	mocker.patch('main.fetch_papers', side_effect=FetchError('rate limited'))
 	mock_io['score'].return_value = ([], set())
 
+	with pytest.raises(SystemExit) as exc:
+		main.main([])
+
+	assert exc.value.code != 0
+	mock_io['send'].assert_not_called()
+	# finish_run runs before the exit so the run row reflects what happened.
+	mock_db['finish_run'].assert_called_once()
+	args = mock_db['finish_run'].call_args.args
+	assert args[3] > 0  # queries_attempted
+	assert args[3] == args[4]  # all attempted == errored
+	assert 'Error fetching' in capsys.readouterr().out
+
+
+def test_live_run_proceeds_when_some_queries_succeed(mock_db, mock_io, mocker):
+	from config import SEARCH_QUERIES
+	from fetcher import FetchError
+
+	side_effects = [FetchError('rate limited')] * (len(SEARCH_QUERIES) - 1) + [[{'paperId': 'p1'}]]
+	mocker.patch('main.fetch_papers', side_effect=side_effects)
+
 	main.main([])
 
 	mock_db['finish_run'].assert_called_once()
+	args = mock_db['finish_run'].call_args.args
+	assert args[3] == len(SEARCH_QUERIES)
+	assert args[4] == len(SEARCH_QUERIES) - 1
+
+
+def test_live_run_exits_zero_when_no_results_but_no_errors(mock_db, mock_io):
+	mock_io['fetch'].return_value = []
+	mock_io['score'].return_value = ([], set())
+
+	main.main([])  # no SystemExit
+
 	mock_io['send'].assert_not_called()
-	assert 'Error fetching' in capsys.readouterr().out
+	mock_db['finish_run'].assert_called_once()
+	args = mock_db['finish_run'].call_args.args
+	assert args[3] > 0
+	assert args[4] == 0
 
 
 def test_live_run_exits_when_semantic_scholar_api_key_missing(monkeypatch, mock_db, mock_io):
@@ -232,7 +267,7 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 
 	mock_db['upsert_paper'].assert_not_called()
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 0)
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, len(SEARCH_QUERIES), 0)
 	assert 'Dropped 2 paper(s) without paperId' in capsys.readouterr().out
 
 
