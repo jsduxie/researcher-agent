@@ -53,7 +53,11 @@ def fetch_papers(query, api_key):
 			continue
 		if not r.ok:
 			raise FetchError(f'{query}: HTTP {r.status_code}, not retried')
-		return r.json().get('data', [])
+		try:
+			payload = r.json()
+		except requests.JSONDecodeError as e:
+			raise FetchError(f'{query}: response was not valid JSON: {e}') from e
+		return payload.get('data', [])
 	raise FetchError(f'{query}: retry loop fell through unexpectedly')
 
 
