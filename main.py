@@ -24,10 +24,14 @@ def _fetch(query):
 
 def _gemini_score(prompt, retries=3):
 	global GEMINI_CALL_COUNT
-	GEMINI_CALL_COUNT += 1
 	if DRY_RUN:
-		return (_FIXTURES / 'gemini_score.json').read_text()
-	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
+		result = (_FIXTURES / 'gemini_score.json').read_text()
+	else:
+		result = scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
+	# Mirror the summariser's on_gemini_call semantics: increment only after a
+	# response body returned, so transport errors do not inflate the counter.
+	GEMINI_CALL_COUNT += 1
+	return result
 
 
 def _gemini_summarise(prompt, retries=3):

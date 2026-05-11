@@ -240,6 +240,17 @@ def test_gemini_score_wrapper_increments_call_count(monkeypatch):
 	assert main.GEMINI_CALL_COUNT == 2
 
 
+def test_gemini_score_wrapper_does_not_increment_when_scorer_raises(monkeypatch, mocker):
+	# Transport errors must not be counted. If they were, a flapping endpoint could
+	# trip the call-count warning even though no quota was consumed.
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mocker.patch('main.scorer.gemini', side_effect=Exception('boom'))
+	main.GEMINI_CALL_COUNT = 0
+	with pytest.raises(Exception, match='boom'):
+		main._gemini_score('prompt')
+	assert main.GEMINI_CALL_COUNT == 0
+
+
 def test_record_gemini_call_increments_count(monkeypatch):
 	main.GEMINI_CALL_COUNT = 0
 	main._record_gemini_call()
