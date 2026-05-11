@@ -210,7 +210,7 @@ def get_latest_rating(conn, paper_id):
 
 
 def get_latest_field_feedback(conn, paper_id):
-	# DISTINCT ON keeps only the first row per field given the ORDER BY, so callers see one (rating, correction) per field with the latest write winning.
+	# DISTINCT ON returns the latest row per field; the ORDER BY drives which wins.
 	with conn.cursor() as cur:
 		cur.execute(
 			'SELECT DISTINCT ON (field) field, rating, correction '
@@ -240,6 +240,7 @@ _SEARCH_PAPERS_COLUMNS = (
 	'findings',
 	'relevance',
 	'limitations',
+	'latest_rating',
 )
 
 _SEARCH_PAPERS_SQL = """
@@ -260,7 +261,8 @@ SELECT
 	summaries.methodology,
 	summaries.findings,
 	summaries.relevance,
-	summaries.limitations
+	summaries.limitations,
+	(SELECT rating FROM ratings WHERE paper_id = papers.paper_id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_rating
 FROM papers
 LEFT JOIN summaries ON papers.paper_id = summaries.paper_id
 {where_clause}

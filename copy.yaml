@@ -1,0 +1,33 @@
+brand: Researcher Agent
+empty_state: No papers match.
+search_placeholder: search title or abstract
+labels:
+  search: Search
+  date_since: Fetched after
+  date_until: Fetched before
+
+headers:
+  title: Title
+  authors: Authors
+  date: Fetched
+  rating: Rating
+
+icons:
+  meta_separator: '·'
+  rating_star: '★'
+  rating_unrated: '—'
+  date_unknown: '—'
+  section_dash: '─'
+  arrow_prev: '←'
+  arrow_next: '→'
+  arrow_external: '↗'
+
+buttons:
+  prev: '← prev'
+  next: 'next →'
+  open_paper: 'open paper ↗'
+  open_pdf: 'open pdf ↗'
+
+authors:
+  none: 'No authors listed'
+  etal_suffix: ' et al.'
