@@ -136,7 +136,7 @@ def main(argv=None):
 
 	# finish_run last so a logging failure never silently skips the email.
 	if conn is not None:
-		db.finish_run(conn, run_id, len(enriched))
+		db.finish_run(conn, run_id, len(enriched), 0, 0)
 
 
 if __name__ == '__main__':

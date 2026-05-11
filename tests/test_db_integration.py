@@ -151,12 +151,20 @@ def test_start_run_inserts_row_with_papers_fetched_and_null_finished_at(conn):
 
 def test_finish_run_sets_finished_at_and_papers_kept(conn):
 	run_id = db.start_run(conn, papers_fetched=42)
-	db.finish_run(conn, run_id, papers_kept=7)
+	db.finish_run(conn, run_id, papers_kept=7, queries_attempted=0, queries_errored=0)
 	with conn.cursor() as cur:
 		cur.execute('SELECT finished_at, papers_kept FROM runs WHERE id = %s', (run_id,))
 		finished_at, papers_kept = cur.fetchone()
 	assert finished_at is not None
 	assert papers_kept == 7
+
+
+def test_finish_run_records_query_outcomes(conn):
+	run_id = db.start_run(conn, papers_fetched=42)
+	db.finish_run(conn, run_id, papers_kept=3, queries_attempted=8, queries_errored=2)
+	with conn.cursor() as cur:
+		cur.execute('SELECT queries_attempted, queries_errored FROM runs WHERE id = %s', (run_id,))
+		assert cur.fetchone() == (8, 2)
 
 
 def test_each_start_run_gets_a_distinct_id(conn):

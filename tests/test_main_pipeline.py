@@ -49,7 +49,7 @@ def test_live_run_opens_db_initialises_schema_and_brackets_with_run_lifecycle(mo
 	mock_db['connect'].assert_called_once_with('postgresql://fake')
 	mock_db['init_schema'].assert_called_once_with(mock_db['conn'])
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 1)
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1, 0, 0)
 
 
 def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
@@ -92,7 +92,7 @@ def test_live_run_does_not_call_mark_scoring_results_when_nothing_needs_scoring(
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
 	mock_io['score'].return_value = ([], set())
 	main.main([])
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
 	mock_io['send'].assert_not_called()
 
 
@@ -157,7 +157,7 @@ def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, 
 	call = mock_db['mark_scoring_results'].call_args
 	assert call.kwargs['attempted'] == ['p1']
 	assert call.kwargs['responded'] == set()
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
 	mock_io['send'].assert_not_called()
 
 
@@ -232,7 +232,7 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 
 	mock_db['upsert_paper'].assert_not_called()
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 0)
-	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0)
+	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, 0, 0)
 	assert 'Dropped 2 paper(s) without paperId' in capsys.readouterr().out
 
 
