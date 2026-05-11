@@ -283,6 +283,89 @@ def test_module_version_is_set():
 	assert summariser.MODEL_VERSION
 
 
+# -- on_gemini_call callback --
+
+
+def test_on_gemini_call_fires_once_for_abstract_path(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	counter = mocker.Mock()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+
+	counter.assert_called_once()
+
+
+def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
+	mocker.patch(
+		'summariser.db.get_summary',
+		return_value={'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'},
+	)
+	gemini_fn = mocker.Mock()
+	counter = mocker.Mock()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+
+	counter.assert_not_called()
+
+
+def test_on_gemini_call_does_not_fire_when_gemini_raises(mocker):
+	# The call never returned a body, so quota wasn't consumed at the model layer.
+	# A transient network error shouldn't be counted.
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
+	counter = mocker.Mock()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+
+	counter.assert_not_called()
+
+
+@responses.activate
+def test_on_gemini_call_fires_once_for_pdf_path(mocker):
+	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
+	responses.post(
+		summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': _valid_response()}]}}]}
+	)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	counter = mocker.Mock()
+
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		mocker.Mock(),
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+		on_gemini_call=counter,
+	)
+
+	counter.assert_called_once()
+
+
+@responses.activate
+def test_on_gemini_call_fires_only_once_when_pdf_fails_then_abstract_succeeds(mocker):
+	# Download fails before any model call; the fallback abstract call is the
+	# only one that actually consumes quota.
+	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	counter = mocker.Mock()
+
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		conn=mocker.MagicMock(),
+		api_key='fake-key',
+		on_gemini_call=counter,
+	)
+
+	counter.assert_called_once()
+
+
 # -- download_pdf --
 
 

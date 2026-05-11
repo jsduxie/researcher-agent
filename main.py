@@ -6,12 +6,14 @@ from pathlib import Path
 import db
 import emailer
 import scorer
-from config import RELEVANCE_THRESHOLD, SEARCH_QUERIES
+import summariser
+from config import GEMINI_CALL_WARN_THRESHOLD, RELEVANCE_THRESHOLD, SEARCH_QUERIES
 from fetcher import dedup_papers, fetch_papers
 from render import build_email
 
 _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
 DRY_RUN = False
+GEMINI_CALL_COUNT = 0
 
 
 def _fetch(query):
@@ -20,10 +22,42 @@ def _fetch(query):
 	return fetch_papers(query)
 
 
-def _gemini(prompt, retries=3):
+def _gemini_score(prompt, retries=3):
+	global GEMINI_CALL_COUNT
+	GEMINI_CALL_COUNT += 1
 	if DRY_RUN:
 		return (_FIXTURES / 'gemini_score.json').read_text()
 	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
+
+
+def _gemini_summarise(prompt, retries=3):
+	if DRY_RUN:
+		return (_FIXTURES / 'gemini_summary.json').read_text()
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
+
+
+def _record_gemini_call():
+	global GEMINI_CALL_COUNT
+	GEMINI_CALL_COUNT += 1
+
+
+def _summarise_kept_papers(enriched, conn):
+	# Summariser handles its own cache check against the summaries table, so a paper
+	# we already summarised on a prior run short-circuits here. PDF path is skipped
+	# in dry-run because api_key resolves to None.
+	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
+	for paper in enriched:
+		fields = summariser.summarise_paper(
+			paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
+		)
+		if fields:
+			paper.update(fields)
+
+
+def _report_gemini_usage():
+	print(f'Total Gemini calls this run: {GEMINI_CALL_COUNT}')
+	if GEMINI_CALL_COUNT > GEMINI_CALL_WARN_THRESHOLD:
+		print(f'WARNING: Gemini call count ({GEMINI_CALL_COUNT}) exceeds threshold ({GEMINI_CALL_WARN_THRESHOLD})')
 
 
 def _send(html, paper_count):
@@ -37,8 +71,9 @@ def _send(html, paper_count):
 def main(argv=None):
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
-	global DRY_RUN
+	global DRY_RUN, GEMINI_CALL_COUNT
 	DRY_RUN = parser.parse_args(argv).dry_run
+	GEMINI_CALL_COUNT = 0
 
 	conn = None
 	run_id = None
@@ -71,12 +106,15 @@ def main(argv=None):
 
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
-	enriched, responded = scorer.score_and_summarise(new_papers, _gemini)
+	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
 
 	if conn is not None and new_papers:
 		db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
+
+	_summarise_kept_papers(enriched, conn)
+	_report_gemini_usage()
 
 	if not enriched:
 		print('No relevant papers, skipping email.')

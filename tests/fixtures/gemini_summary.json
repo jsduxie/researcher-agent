@@ -1,0 +1,6 @@
+{
+	"methodology": "The authors fine-tune a transformer-based model on a Reddit corpus, evaluating against a held-out test set drawn from BPD-related subreddits.",
+	"findings": "The model achieves competitive recall and precision against a CNN baseline, with attention visualisations highlighting affective language as the strongest predictive signal.",
+	"relevance_to_research": "Directly relevant to the student's BPD detection thesis, particularly the use of attention-based architectures on Reddit text.",
+	"limitations": "Single-subreddit training and absence of demographic controls limit generalisability; the authors acknowledge potential annotator bias."
+}
