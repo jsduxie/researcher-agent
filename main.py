@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 import db
@@ -16,11 +17,11 @@ DRY_RUN = False
 GEMINI_CALL_COUNT = 0
 
 
-def _fetch(query):
+def _fetch(query, api_key):
 	if DRY_RUN:
 		return json.loads((_FIXTURES / 'papers.json').read_text())
 	try:
-		return fetch_papers(query)
+		return fetch_papers(query, api_key)
 	except FetchError as e:
 		print(f'Error fetching "{query}": {e}')
 		return []
@@ -85,14 +86,18 @@ def main(argv=None):
 
 	conn = None
 	run_id = None
+	api_key = None
 	if not DRY_RUN:
+		api_key = os.environ.get('SEMANTIC_SCHOLAR_API_KEY')
+		if not api_key:
+			sys.exit('SEMANTIC_SCHOLAR_API_KEY is required; set it in the environment or GitHub Actions secrets.')
 		conn = db.connect(os.environ['DATABASE_URL'])
 		db.init_schema(conn)
 
 	all_papers = []
 	for query in SEARCH_QUERIES:
 		print(f'\nSearching: {query}')
-		all_papers.extend(_fetch(query))
+		all_papers.extend(_fetch(query, api_key))
 
 	unique = dedup_papers(all_papers)
 	# Papers without paperId cannot be persisted (paper_id is the PK) and cannot be

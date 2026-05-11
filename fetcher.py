@@ -32,13 +32,14 @@ def _retry_after_seconds(response):
 		return None
 
 
-def fetch_papers(query):
+def fetch_papers(query, api_key):
 	cutoff = _cutoff_year(datetime.now(), DAYS_BACK)
 	params = {'query': query, 'limit': MAX_PER_QUERY, 'fields': PAPER_FIELDS, 'publicationDateOrYear': f'{cutoff}-'}
+	headers = {'x-api-key': api_key}
 	time.sleep(2)
 	for attempt in range(len(BACKOFF_DELAYS) + 1):
 		try:
-			r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=15)
+			r = requests.get(SEMANTIC_SCHOLAR_URL, params=params, headers=headers, timeout=15)
 		except requests.RequestException as e:
 			if attempt == len(BACKOFF_DELAYS):
 				raise FetchError(f'{query}: gave up after {attempt + 1} attempts: {e}') from e
