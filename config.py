@@ -30,6 +30,7 @@ GEMINI_MODEL = _digest['gemini_model']
 GEMINI_BASE_URL = _digest['gemini_base_url']
 GEMINI_UPLOAD_BASE_URL = _digest['gemini_upload_base_url']
 GEMINI_CALL_WARN_THRESHOLD = _digest['gemini_call_warn_threshold']
+GEMINI_CALL_BUDGET = _digest['gemini_call_budget']
 PDF_MAX_SIZE_MB = _digest['pdf_max_size_mb']
 
 SCORER_PROMPT = _load_prompt('scorer')

@@ -24,13 +24,13 @@ def test_summariser_prompt_formats_without_keyerror():
 	assert 'abc' in rendered
 
 
-# -- GEMINI_CALL_WARN_THRESHOLD --
+# -- GEMINI_CALL_BUDGET --
 
 
-def test_gemini_call_warn_threshold_is_positive_int():
-	assert isinstance(config.GEMINI_CALL_WARN_THRESHOLD, int)
-	assert not isinstance(config.GEMINI_CALL_WARN_THRESHOLD, bool)
-	assert config.GEMINI_CALL_WARN_THRESHOLD > 0
+def test_gemini_call_budget_is_positive_int():
+	assert isinstance(config.GEMINI_CALL_BUDGET, int)
+	assert not isinstance(config.GEMINI_CALL_BUDGET, bool)
+	assert config.GEMINI_CALL_BUDGET > 0
 
 
 # -- GEMINI_MODEL --

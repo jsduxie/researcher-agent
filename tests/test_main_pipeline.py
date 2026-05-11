@@ -397,7 +397,7 @@ def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
 	mock_db['finish_run'].assert_called_once()
 
 
-# -- gemini call count + warning --
+# -- gemini call count + budget --
 
 
 def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
@@ -412,25 +412,26 @@ def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
 	assert 'Total Gemini calls this run:' in out
 
 
-def test_live_run_warns_when_gemini_call_count_exceeds_threshold(mock_db, mock_io, mocker, capsys):
-	mocker.patch('main.GEMINI_CALL_WARN_THRESHOLD', 0)
+def test_live_run_logs_budget_exhausted_message_when_count_reaches_cap(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.GEMINI_CALL_BUDGET', 1)
 
 	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
 		on_gemini_call()
+		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
 	mock_io['summarise'].side_effect = fake_summarise
 	main.main([])
-	assert 'WARNING: Gemini call count' in capsys.readouterr().out
+	assert 'Gemini budget exhausted' in capsys.readouterr().out
 
 
-def test_live_run_does_not_warn_when_gemini_call_count_under_threshold(mock_db, mock_io, mocker, capsys):
-	mocker.patch('main.GEMINI_CALL_WARN_THRESHOLD', 1_000_000)
+def test_live_run_does_not_log_budget_exhausted_when_under_cap(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.GEMINI_CALL_BUDGET', 1_000_000)
 	main.main([])
-	assert 'WARNING' not in capsys.readouterr().out
+	assert 'Gemini budget exhausted' not in capsys.readouterr().out
 
 
 def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
-	# A stale counter from a prior run would cause spurious warnings on the next.
+	# A stale counter from a prior run would cause the budget to misfire on the next.
 	main.GEMINI_CALL_COUNT = 999
 	main.main([])
 	# After the run, count reflects only this run's calls (scorer is mocked so _gemini_score wasn't called; summariser was mocked so on_gemini_call didn't fire).
@@ -538,3 +539,101 @@ def test_summarise_kept_papers_halts_on_quota_exhausted_and_preserves_earlier_fi
 	assert p1.get('methodology') == 'm'
 	assert 'methodology' not in p2
 	assert 'methodology' not in p3
+
+
+# -- gemini budget enforcement --
+
+
+def test_gemini_score_raises_budget_exhausted_when_count_at_cap(mocker, monkeypatch):
+	# Pre-check fires before any Gemini call when the counter already sits at the cap.
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mocker.patch('main.GEMINI_CALL_BUDGET', 2)
+	mock_gemini = mocker.patch('main.scorer.gemini', return_value='ok')
+	main.GEMINI_CALL_COUNT = 2
+
+	with pytest.raises(main.GeminiBudgetExhausted, match='budget 2'):
+		main._gemini_score('prompt')
+
+	mock_gemini.assert_not_called()
+
+
+def test_gemini_score_does_not_increment_when_budget_raises(mocker, monkeypatch):
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mocker.patch('main.GEMINI_CALL_BUDGET', 1)
+	mocker.patch('main.scorer.gemini', return_value='ok')
+	main.GEMINI_CALL_COUNT = 1
+
+	with pytest.raises(main.GeminiBudgetExhausted):
+		main._gemini_score('prompt')
+
+	# Pre-check raises before the post-call increment, so the counter must stay put.
+	assert main.GEMINI_CALL_COUNT == 1
+
+
+def test_gemini_score_permits_calls_until_count_reaches_cap(mocker, monkeypatch):
+	# Budget N means exactly N successful calls before the next one is refused.
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mocker.patch('main.GEMINI_CALL_BUDGET', 3)
+	mocker.patch('main.scorer.gemini', return_value='ok')
+	main.GEMINI_CALL_COUNT = 0
+
+	main._gemini_score('p')
+	main._gemini_score('p')
+	main._gemini_score('p')
+
+	assert main.GEMINI_CALL_COUNT == 3
+	with pytest.raises(main.GeminiBudgetExhausted):
+		main._gemini_score('p')
+
+
+def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_io, mocker, capsys):
+	# Three enriched papers, budget=1 already consumed by scoring; none should be summarised, but the email still goes out so the user gets something.
+	mocker.patch('main.GEMINI_CALL_BUDGET', 1)
+
+	def consume_then_score(papers, gemini_fn):
+		# Simulate scoring having burned a Gemini call before returning.
+		main.GEMINI_CALL_COUNT = 1
+		return (
+			[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
+			{'a', 'b', 'c'},
+		)
+
+	mock_io['score'].side_effect = consume_then_score
+
+	main.main([])
+
+	mock_io['summarise'].assert_not_called()
+	mock_io['send'].assert_called_once()
+	assert 'Gemini budget (1) reached' in capsys.readouterr().out
+
+
+def test_summarise_kept_papers_stops_mid_loop_when_count_crosses_cap(mock_db, mock_io, mocker, capsys):
+	# Budget=2, scoring burned 0, summariser fires on_gemini_call once per paper; expect first two papers summarised, third skipped.
+	mocker.patch('main.GEMINI_CALL_BUDGET', 2)
+	mock_io['score'].return_value = (
+		[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
+		{'a', 'b', 'c'},
+	)
+
+	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
+		on_gemini_call()
+		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+
+	mock_io['summarise'].side_effect = fake_summarise
+
+	main.main([])
+
+	assert mock_io['summarise'].call_count == 2
+	mock_io['send'].assert_called_once()
+	assert '1 paper(s) will be emailed without full summaries' in capsys.readouterr().out
+
+
+def test_live_run_does_not_crash_when_budget_zero(mock_db, mock_io, mocker):
+	# Defensive: if the budget is mis-set to 0, scorer batches get refused, summariser never runs, the pipeline still finishes the run cleanly.
+	mocker.patch('main.GEMINI_CALL_BUDGET', 0)
+	mock_io['score'].return_value = ([], set())
+
+	main.main([])
+
+	mock_db['finish_run'].assert_called_once()
+	mock_io['send'].assert_not_called()
