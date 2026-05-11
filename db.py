@@ -19,6 +19,20 @@ SET title = EXCLUDED.title,
 RETURNING (xmax = 0) AS was_inserted
 """
 
+_UPSERT_SUMMARY_SQL = """
+INSERT INTO summaries (paper_id, methodology, findings, relevance, limitations, model_version, created_at)
+VALUES (%s, %s, %s, %s, %s, %s, NOW())
+ON CONFLICT (paper_id) DO UPDATE
+SET methodology = EXCLUDED.methodology,
+    findings = EXCLUDED.findings,
+    relevance = EXCLUDED.relevance,
+    limitations = EXCLUDED.limitations,
+    model_version = EXCLUDED.model_version,
+    created_at = NOW()
+"""
+
+_SUMMARY_COLUMNS = ('methodology', 'findings', 'relevance', 'limitations', 'model_version')
+
 
 def connect(database_url):
 	# autocommit and prepare_threshold=None keep us compatible with Neon's PgBouncer pooler.
@@ -83,6 +97,33 @@ def needs_scoring(conn, paper_ids):
 	with conn.cursor() as cur:
 		cur.execute('SELECT paper_id FROM papers WHERE paper_id = ANY(%s) AND scored_at IS NULL', (list(paper_ids),))
 		return {row[0] for row in cur.fetchall()}
+
+
+def get_summary(conn, paper_id):
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT methodology, findings, relevance, limitations, model_version FROM summaries WHERE paper_id = %s',
+			(paper_id,),
+		)
+		row = cur.fetchone()
+	if row is None:
+		return None
+	return dict(zip(_SUMMARY_COLUMNS, row, strict=True))
+
+
+def upsert_summary(conn, paper_id, fields, model_version):
+	with conn.cursor() as cur:
+		cur.execute(
+			_UPSERT_SUMMARY_SQL,
+			(
+				paper_id,
+				fields.get('methodology'),
+				fields.get('findings'),
+				fields.get('relevance'),
+				fields.get('limitations'),
+				model_version,
+			),
+		)
 
 
 def mark_scoring_results(conn, attempted, responded):
