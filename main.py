@@ -8,7 +8,7 @@ import db
 import emailer
 import scorer
 import summariser
-from config import GEMINI_CALL_WARN_THRESHOLD, RELEVANCE_THRESHOLD, SEARCH_QUERIES
+from config import GEMINI_CALL_BUDGET, RELEVANCE_THRESHOLD, SEARCH_QUERIES
 from fetcher import FetchError, dedup_papers, fetch_papers
 from render import build_email
 
@@ -25,6 +25,10 @@ REQUIRED_ENV_VARS = (
 	'GMAIL_APP_PASSWORD',
 	'EMAIL_TO',
 )
+
+
+class GeminiBudgetExhausted(Exception):
+	pass
 
 
 def _fetch(query, api_key):
@@ -50,6 +54,10 @@ def _collect_papers(api_key):
 
 def _gemini_score(prompt, retries=3):
 	# Counter fires per attempt inside scorer.gemini's retry loop so a 429 storm trips the budget within a small multiple of the cap.
+	global GEMINI_CALL_COUNT
+
+	if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
+		raise GeminiBudgetExhausted(f'budget {GEMINI_CALL_BUDGET} reached after {GEMINI_CALL_COUNT} calls')
 	if DRY_RUN:
 		_record_gemini_call()
 		return (_FIXTURES / 'gemini_score.json').read_text()
@@ -84,9 +92,9 @@ def _summarise_kept_papers(enriched, database_url):
 
 
 def _report_gemini_usage():
-	print(f'Total Gemini calls this run: {GEMINI_CALL_COUNT}')
-	if GEMINI_CALL_COUNT > GEMINI_CALL_WARN_THRESHOLD:
-		print(f'WARNING: Gemini call count ({GEMINI_CALL_COUNT}) exceeds threshold ({GEMINI_CALL_WARN_THRESHOLD})')
+	print(f'Total Gemini calls this run: {GEMINI_CALL_COUNT}/{GEMINI_CALL_BUDGET}')
+	if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
+		print(f'Gemini budget exhausted (cap {GEMINI_CALL_BUDGET})')
 
 
 def _send(html, paper_count):

@@ -15,26 +15,25 @@ from summariser import (
 )
 
 
-def _run_or_skip_on_gemini_5xx(call):
-	# Live Gemini is the most flake-prone dependency; treat a transient 5xx as a skip rather than a test failure so CI doesn't redden over a vendor blip.
+def _run_or_skip_on_gemini_outage(call):
+	# Treat a transient 5xx or a 429 as a skip rather than a failure so CI doesn't redden over external constraints; live Gemini is the most flake-prone dependency.
 	try:
 		return call()
 	except requests.HTTPError as e:
-		if e.response is not None and e.response.status_code >= 500:
+		if e.response is not None and (e.response.status_code == 429 or e.response.status_code >= 500):
 			pytest.skip(f'Gemini transient {e.response.status_code}: {e}')
 		raise
 
 
 _GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+# Live tests are opt-in via RUN_LIVE_GEMINI=1 even when a key is set; CI leaves it unset so the daily Gemini quota isn't burned on every push.
+_LIVE_GEMINI_OPTED_IN = os.environ.get('RUN_LIVE_GEMINI') == '1' and bool(_GEMINI_API_KEY)
 
-# Mirror test_db_integration.py: empty string covers GH Actions' fork-PR secret behaviour.
-pytestmark = [
-	pytest.mark.integration,
-	pytest.mark.skipif(
-		not _GEMINI_API_KEY,
-		reason='GEMINI_API_KEY not set; live integration tests against Semantic Scholar and Gemini require a key',
-	),
-]
+pytestmark = [pytest.mark.integration]
+
+_skip_unless_live_gemini = pytest.mark.skipif(
+	not _LIVE_GEMINI_OPTED_IN, reason='live Gemini tests are opt-in via RUN_LIVE_GEMINI=1 (20 req/day free-tier quota)'
+)
 
 
 # A stable open-access paper with a well-known arXiv URL. Used by the live download and full-chain tests; arXiv PDF URLs don't change once published.
@@ -92,6 +91,7 @@ def test_fetch_papers_returns_results_from_semantic_scholar():
 # -- Gemini Files API live --
 
 
+@_skip_unless_live_gemini
 def test_download_pdf_against_live_arxiv_url():
 	max_bytes = summariser.PDF_MAX_SIZE_MB * 1024 * 1024
 	pdf_bytes = download_pdf(_ARXIV_PDF_URL, max_bytes)
@@ -99,14 +99,15 @@ def test_download_pdf_against_live_arxiv_url():
 	assert len(pdf_bytes) > 1000
 
 
+@_skip_unless_live_gemini
 def test_upload_and_generate_against_gemini_files_api():
 	# Round-trip a tiny synthetic PDF through the Files API (upload + generate); we only check the two-step protocol completes with non-empty text.
 	pdf_bytes = _build_minimal_pdf('This paper proposes a transformer for BPD detection.')
-	file_uri = _run_or_skip_on_gemini_5xx(
+	file_uri = _run_or_skip_on_gemini_outage(
 		lambda: upload_pdf_to_gemini(pdf_bytes, 'integration-test.pdf', _GEMINI_API_KEY)
 	)
 	assert file_uri
-	response = _run_or_skip_on_gemini_5xx(
+	response = _run_or_skip_on_gemini_outage(
 		lambda: generate_with_file('Reply with the single word ok.', file_uri, _GEMINI_API_KEY)
 	)
 	assert response.strip()
@@ -115,6 +116,7 @@ def test_upload_and_generate_against_gemini_files_api():
 # -- Full chain: live PDF + live Gemini --
 
 
+@_skip_unless_live_gemini
 def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 	# End-to-end PDF path against a real arXiv URL with no abstract fallback. Transient Gemini outage surfaces as result is None, which we skip rather than fail.
 	paper = {'paperId': _ARXIV_PAPER_ID, 'title': 'Attention Is All You Need', 'openAccessPdf': {'url': _ARXIV_PDF_URL}}
@@ -133,13 +135,14 @@ def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 # -- parse_summary_response sanity against a live PDF --
 
 
+@_skip_unless_live_gemini
 def test_summariser_response_parses_when_run_against_a_real_pdf():
 	# Confirms that the live Gemini response with a real PDF parses cleanly through the same code path the production pipeline uses.
 	pdf_bytes = download_pdf(_ARXIV_PDF_URL, summariser.PDF_MAX_SIZE_MB * 1024 * 1024)
-	file_uri = _run_or_skip_on_gemini_5xx(lambda: upload_pdf_to_gemini(pdf_bytes, 'attention.pdf', _GEMINI_API_KEY))
+	file_uri = _run_or_skip_on_gemini_outage(lambda: upload_pdf_to_gemini(pdf_bytes, 'attention.pdf', _GEMINI_API_KEY))
 	prompt = summariser.SUMMARISER_PROMPT.format(
 		research_context='Transformer architectures for text classification.', source_material='See the attached PDF.'
 	)
-	response = _run_or_skip_on_gemini_5xx(lambda: generate_with_file(prompt, file_uri, _GEMINI_API_KEY))
+	response = _run_or_skip_on_gemini_outage(lambda: generate_with_file(prompt, file_uri, _GEMINI_API_KEY))
 	fields = parse_summary_response(response)
 	assert set(fields.keys()) == {'methodology', 'findings', 'relevance', 'limitations'}
