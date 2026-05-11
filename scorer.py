@@ -13,12 +13,14 @@ _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 
 
 def gemini(prompt, api_key, retries=3):
-	headers = {'Content-Type': 'application/json'}
+	# Auth via header rather than ?key= query param keeps the secret out of any
+	# URL that may surface in HTTPError messages and downstream logs.
+	headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
 
 	for attempt in range(retries):
 		time.sleep(5)
-		r = requests.post(f'{GEMINI_URL}?key={api_key}', headers=headers, json=body, timeout=120)
+		r = requests.post(GEMINI_URL, headers=headers, json=body, timeout=120)
 		if r.status_code == 429:
 			wait = 15 * (attempt + 1)
 			print(f'Gemini rate limited, waiting {wait}s')
