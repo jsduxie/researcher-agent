@@ -44,6 +44,13 @@ def test_init_schema_executes_schema_sql(mock_conn):
 	assert 'CREATE TABLE IF NOT EXISTS summary_feedback' in executed_sql
 
 
+def test_init_schema_includes_idempotent_migration_for_runs_query_columns(mock_conn):
+	db.init_schema(mock_conn)
+	executed_sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_attempted' in executed_sql
+	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored' in executed_sql
+
+
 # -- upsert_paper --
 
 
@@ -182,12 +189,21 @@ def test_start_run_leaves_papers_kept_null_until_finish(mock_conn):
 
 
 def test_finish_run_updates_finished_at_and_papers_kept(mock_conn):
-	db.finish_run(mock_conn, run_id=42, papers_kept=7)
+	db.finish_run(mock_conn, run_id=42, papers_kept=7, queries_attempted=0, queries_errored=0)
 	call = _cursor(mock_conn).execute.call_args
 	assert 'UPDATE runs' in call.args[0]
 	assert 'finished_at = NOW()' in call.args[0]
 	assert 'papers_kept = %s' in call.args[0]
-	assert call.args[1] == (7, 42)
+	assert call.args[1][0] == 7
+	assert call.args[1][-1] == 42
+
+
+def test_finish_run_records_query_outcomes(mock_conn):
+	db.finish_run(mock_conn, run_id=42, papers_kept=3, queries_attempted=8, queries_errored=2)
+	call = _cursor(mock_conn).execute.call_args
+	assert 'queries_attempted = %s' in call.args[0]
+	assert 'queries_errored = %s' in call.args[0]
+	assert call.args[1] == (3, 8, 2, 42)
 
 
 # -- error propagation: db.py never swallows database errors --
@@ -228,7 +244,7 @@ def test_start_run_propagates_database_error(mock_conn):
 def test_finish_run_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('finish boom')
 	with pytest.raises(RuntimeError, match='finish boom'):
-		db.finish_run(mock_conn, run_id=1, papers_kept=0)
+		db.finish_run(mock_conn, run_id=1, papers_kept=0, queries_attempted=0, queries_errored=0)
 
 
 # -- needs_scoring --

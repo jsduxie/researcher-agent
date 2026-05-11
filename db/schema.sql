@@ -43,8 +43,14 @@ CREATE TABLE IF NOT EXISTS runs (
 	started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 	finished_at TIMESTAMPTZ,
 	papers_fetched INTEGER NOT NULL DEFAULT 0,
-	papers_kept INTEGER
+	papers_kept INTEGER,
+	queries_attempted INTEGER,
+	queries_errored INTEGER
 );
+
+-- Idempotent migration for databases created before these columns existed.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_attempted INTEGER;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored INTEGER;
 
 CREATE TABLE IF NOT EXISTS ratings (
 	id BIGSERIAL PRIMARY KEY,

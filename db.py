@@ -86,9 +86,13 @@ def start_run(conn, papers_fetched):
 		return cur.fetchone()[0]
 
 
-def finish_run(conn, run_id, papers_kept):
+def finish_run(conn, run_id, papers_kept, queries_attempted, queries_errored):
 	with conn.cursor() as cur:
-		cur.execute('UPDATE runs SET finished_at = NOW(), papers_kept = %s WHERE id = %s', (papers_kept, run_id))
+		cur.execute(
+			'UPDATE runs SET finished_at = NOW(), papers_kept = %s, queries_attempted = %s, queries_errored = %s '
+			'WHERE id = %s',
+			(papers_kept, queries_attempted, queries_errored, run_id),
+		)
 
 
 def needs_scoring(conn, paper_ids):
