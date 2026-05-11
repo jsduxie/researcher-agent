@@ -1,5 +1,6 @@
 import json
 import re
+import time
 
 import requests
 
@@ -11,6 +12,9 @@ MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
 
 GEMINI_GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
 GEMINI_FILES_UPLOAD_URL = 'https://generativelanguage.googleapis.com/upload/v1beta/files'
+
+GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+GEMINI_BACKOFF_DELAYS = (5, 15, 45)
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
@@ -83,6 +87,34 @@ def _summarise_via_abstract(paper, gemini_fn, on_gemini_call):
 		return None
 
 
+def _retry_after_seconds(response):
+	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff
+	# in that case rather than parse dates the API never sends.
+	header = response.headers.get('Retry-After')
+	if header is None:
+		return None
+	try:
+		return int(header)
+	except (TypeError, ValueError):
+		return None
+
+
+def _post_with_retry(url, **kwargs):
+	# Retries 429 and 5xx with backoff. After exhaustion returns the final
+	# failed response so the caller's raise_for_status surfaces it consistently
+	# with the non-retry code path.
+	last = None
+	for attempt in range(len(GEMINI_BACKOFF_DELAYS) + 1):
+		last = requests.post(url, **kwargs)
+		if last.status_code not in GEMINI_RETRY_STATUS_CODES:
+			return last
+		if attempt == len(GEMINI_BACKOFF_DELAYS):
+			return last
+		delay = _retry_after_seconds(last) or GEMINI_BACKOFF_DELAYS[attempt]
+		time.sleep(delay)
+	return last
+
+
 def download_pdf(url, max_size_bytes):
 	with requests.get(url, stream=True, timeout=60) as r:
 		r.raise_for_status()
@@ -109,7 +141,7 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
 		'Content-Type': 'application/json',
 		'x-goog-api-key': api_key,
 	}
-	start = requests.post(
+	start = _post_with_retry(
 		GEMINI_FILES_UPLOAD_URL, headers=start_headers, json={'file': {'display_name': display_name}}, timeout=60
 	)
 	start.raise_for_status()
@@ -122,7 +154,7 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
 		'X-Goog-Upload-Offset': '0',
 		'X-Goog-Upload-Command': 'upload, finalize',
 	}
-	upload = requests.post(upload_url, headers=upload_headers, data=pdf_bytes, timeout=120)
+	upload = _post_with_retry(upload_url, headers=upload_headers, data=pdf_bytes, timeout=120)
 	upload.raise_for_status()
 	try:
 		return upload.json()['file']['uri']
@@ -136,7 +168,7 @@ def generate_with_file(prompt, file_uri, api_key):
 			{'parts': [{'file_data': {'mime_type': 'application/pdf', 'file_uri': file_uri}}, {'text': prompt}]}
 		]
 	}
-	r = requests.post(GEMINI_GENERATE_URL, headers={'x-goog-api-key': api_key}, json=body, timeout=120)
+	r = _post_with_retry(GEMINI_GENERATE_URL, headers={'x-goog-api-key': api_key}, json=body, timeout=120)
 	r.raise_for_status()
 	try:
 		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()

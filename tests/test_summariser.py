@@ -16,6 +16,11 @@ from summariser import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_sleep(mocker):
+	return mocker.patch('summariser.time.sleep')
+
+
 def _valid_response(**overrides):
 	body = {'methodology': 'method', 'findings': 'find', 'relevance_to_research': 'rel', 'limitations': 'lim'}
 	body.update(overrides)
@@ -452,10 +457,20 @@ def test_upload_pdf_to_gemini_sends_display_name_in_metadata():
 
 
 @responses.activate
-def test_upload_pdf_to_gemini_propagates_start_http_error():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
+def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_start_5xx():
+	for _ in range(4):
+		responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
 		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+	assert len(responses.calls) == 4
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_does_not_retry_start_on_400():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=400)
+	with pytest.raises(requests.HTTPError):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+	assert len(responses.calls) == 1
 
 
 @responses.activate
@@ -466,11 +481,20 @@ def test_upload_pdf_to_gemini_raises_when_no_upload_url_header():
 
 
 @responses.activate
-def test_upload_pdf_to_gemini_propagates_upload_http_error():
+def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_upload_5xx():
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={}, status=500)
+	for _ in range(4):
+		responses.post(UPLOAD_TARGET, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
 		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+@responses.activate
+def test_upload_pdf_to_gemini_retries_start_on_429_then_succeeds():
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=429)
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/x'}})
+	assert upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k') == 'files/x'
 
 
 @responses.activate
@@ -525,10 +549,47 @@ def test_generate_with_file_sends_api_key_in_header_not_url():
 
 
 @responses.activate
-def test_generate_with_file_propagates_http_error():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+def test_generate_with_file_raises_after_retries_exhausted_on_5xx():
+	for _ in range(4):
+		responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
 		generate_with_file('p', 'files/abc', 'k')
+	assert len(responses.calls) == 4
+
+
+@responses.activate
+def test_generate_with_file_does_not_retry_on_400():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=400)
+	with pytest.raises(requests.HTTPError):
+		generate_with_file('p', 'files/abc', 'k')
+	assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_generate_with_file_retries_on_429_then_succeeds():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=429)
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert generate_with_file('p', 'files/abc', 'k') == 'ok'
+	assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_generate_with_file_retries_on_500_then_succeeds():
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert generate_with_file('p', 'files/abc', 'k') == 'ok'
+	assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_generate_with_file_honours_retry_after_seconds(_no_sleep):
+	responses.post(summariser.GEMINI_GENERATE_URL, status=429, headers={'Retry-After': '11'})
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	generate_with_file('p', 'files/abc', 'k')
+	# Retry-After is the only sleep this function triggers; the 11s override is honoured
+	# in place of the 5s default backoff for the first retry.
+	delays = [c.args[0] for c in _no_sleep.call_args_list]
+	assert delays == [11]
 
 
 @responses.activate
@@ -627,7 +688,9 @@ def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, 
 @responses.activate
 def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
 	responses.get(PDF_URL, body=b'pdf')
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
+	# 400 fails immediately without engaging the retry path so the test stays
+	# focused on the fallback behaviour rather than retry mechanics.
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=400)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
@@ -648,7 +711,7 @@ def test_summarise_paper_falls_back_when_generate_fails(mocker):
 	responses.get(PDF_URL, body=b'pdf')
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=400)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
