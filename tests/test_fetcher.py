@@ -99,6 +99,16 @@ def test_fetch_papers_returns_empty_list_when_data_key_missing():
 
 
 @responses.activate
+def test_fetch_papers_raises_fetch_error_on_invalid_json_body():
+	# 2xx with malformed body indicates an upstream contract change, not a
+	# transient; retrying would just resend the same broken response.
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body='<html>not json</html>', status=200)
+	with pytest.raises(FetchError, match='not valid JSON'):
+		fetch_papers('q', 'test-key')
+	assert len(responses.calls) == 1
+
+
+@responses.activate
 def test_fetch_papers_raises_when_500_persists():
 	for _ in range(4):
 		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'error': 'oops'}, status=500)
