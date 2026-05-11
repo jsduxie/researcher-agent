@@ -1,0 +1,322 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+	--bg: #131110;
+	--surface: #1d1a17;
+	--text: #f1e9d6;
+	--muted: #a89e8a;
+	--rule: #322d28;
+	--accent: #d99565;
+	--accent-soft: #8a614a;
+	--font-display: 'Space Grotesk', system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+html,
+body,
+[data-testid='stAppViewContainer'],
+[data-testid='stMain'] {
+	background: var(--bg) !important;
+	color: var(--text) !important;
+	font-family: var(--font-display) !important;
+}
+
+[data-testid='stHeader'],
+#MainMenu,
+footer,
+[data-testid='stToolbar'],
+[data-testid='stStatusWidget'] {
+	display: none !important;
+	visibility: hidden !important;
+}
+
+[data-testid='stMainBlockContainer'] {
+	padding-top: 2rem !important;
+	padding-bottom: 2.5rem !important;
+	padding-left: 2.5rem !important;
+	padding-right: 2.5rem !important;
+	max-width: none !important;
+}
+
+.brand {
+	font-family: var(--font-display);
+	font-weight: 700;
+	font-size: 2.25rem;
+	letter-spacing: -0.03em;
+	color: var(--text);
+	margin-bottom: 1.5rem;
+	padding-bottom: 0.85rem;
+	border-bottom: 2px solid var(--accent);
+	position: relative;
+}
+
+.brand::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	bottom: -2px;
+	width: 64px;
+	height: 2px;
+	background: var(--text);
+}
+
+[data-testid='stWidgetLabel'] p,
+[data-testid='stWidgetLabel'] label {
+	font-family: var(--font-mono) !important;
+	font-size: 0.72rem !important;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--muted) !important;
+	margin-bottom: 0.3rem !important;
+}
+
+[data-testid='stTextInput'] input,
+[data-testid='stDateInput'] input {
+	background: transparent !important;
+	border: 1px solid var(--rule) !important;
+	border-radius: 0 !important;
+	color: var(--text) !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	padding: 0.5rem 0.75rem !important;
+}
+
+[data-testid='stTextInput'] input:focus,
+[data-testid='stDateInput'] input:focus {
+	border-color: var(--accent) !important;
+	box-shadow: none !important;
+	outline: none !important;
+}
+
+[data-testid='stTextInput'] input::placeholder {
+	color: var(--muted) !important;
+	font-style: italic;
+}
+
+[data-testid='stHorizontalBlock'] {
+	align-items: center !important;
+}
+
+/* Force every column cell to centre its content vertically and share a baseline. */
+[data-testid='stHorizontalBlock'] > [data-testid='stColumn'] {
+	display: flex !important;
+	flex-direction: column !important;
+	justify-content: center !important;
+}
+
+/* Zero out the default <p> margin Streamlit emits inside markdown blocks and buttons,
+   which otherwise drags content off the row's vertical centre. */
+[data-testid='stHorizontalBlock'] [data-testid='stMarkdownContainer'] p,
+[data-testid='stButton'] button p {
+	margin: 0 !important;
+	line-height: 1.4 !important;
+}
+
+/* Buttons sit inside element-container > stButton wrappers that Streamlit gives
+   non-zero padding/min-height by default. Strip them so the button's bounding
+   box collapses to the same height as a sibling markdown cell. */
+[data-testid='stButton'],
+[data-testid='stButton'] [data-testid='stMarkdownContainer'] {
+	margin: 0 !important;
+	padding: 0 !important;
+	min-height: 0 !important;
+}
+
+hr.row-divider {
+	border: none;
+	border-top: 1px solid var(--rule);
+	margin: 0 !important;
+}
+
+hr.header-divider {
+	border-top: 1px solid var(--accent-soft);
+}
+
+.col-header {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--muted);
+	padding-bottom: 0.5rem;
+	text-align: center;
+}
+
+/* Title column (second cell) keeps a leading edge for long text. */
+[data-testid='stColumn']:nth-child(2) .col-header {
+	text-align: left;
+}
+
+.row-index {
+	font-family: var(--font-mono);
+	font-weight: 500;
+	font-size: 0.8rem;
+	color: var(--accent);
+	text-align: center;
+}
+
+.row-meta {
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	color: var(--muted);
+	text-align: center;
+}
+
+.row-rating {
+	font-family: var(--font-mono);
+	font-weight: 500;
+	font-size: 0.85rem;
+	color: var(--text);
+	text-align: center;
+}
+
+.row-rating::first-letter {
+	color: var(--accent);
+}
+
+[data-testid='stButton'] button {
+	background: transparent !important;
+	border: none !important;
+	border-radius: 0 !important;
+	color: var(--text) !important;
+	font-family: var(--font-display) !important;
+	font-weight: 500 !important;
+	font-size: 1rem !important;
+	line-height: 1.4 !important;
+	text-align: left !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	min-height: 0 !important;
+	height: auto !important;
+	display: block !important;
+	box-shadow: none !important;
+}
+
+[data-testid='stButton'] button:hover {
+	color: var(--accent) !important;
+	background: transparent !important;
+}
+
+[data-testid='stButton'] button:focus,
+[data-testid='stButton'] button:active {
+	background: transparent !important;
+	color: var(--accent) !important;
+	box-shadow: none !important;
+	outline: none !important;
+}
+
+[data-testid='stButton'] button p {
+	font-weight: 500 !important;
+}
+
+hr.section-divider {
+	border: none;
+	border-top: 1px solid var(--accent-soft);
+	margin: 1.75rem 1.25rem 0.75rem 1.25rem !important;
+}
+
+.section-label,
+.section-body,
+.row-links,
+.modal-title,
+.modal-authors,
+.modal-meta {
+	margin-left: 1.25rem !important;
+	margin-right: 1.25rem !important;
+}
+
+.section-label {
+	font-family: var(--font-mono);
+	font-size: 0.9rem;
+	font-weight: 500;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--accent);
+	margin-top: 0;
+	margin-bottom: 0.6rem;
+}
+
+.section-body {
+	font-family: var(--font-display);
+	font-size: 0.95rem;
+	line-height: 1.55;
+	color: var(--text);
+	max-width: 78ch;
+}
+
+.row-links {
+	margin-top: 1.75rem;
+	margin-bottom: 0.5rem;
+	display: flex;
+	gap: 1.5rem;
+}
+
+.row-links a {
+	color: var(--accent) !important;
+	text-decoration: none !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	border: 1px solid var(--accent);
+	border-radius: 0 !important;
+	padding: 0.45rem 0.85rem;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+	display: inline-block;
+}
+
+.row-links a:hover {
+	background: var(--accent);
+	color: var(--bg) !important;
+}
+
+.modal-title {
+	font-family: var(--font-display);
+	font-weight: 600;
+	font-size: 1.65rem;
+	letter-spacing: -0.02em;
+	color: var(--text);
+	line-height: 1.25;
+	margin-top: 0.25rem;
+	margin-bottom: 0.5rem;
+}
+
+.modal-authors {
+	font-family: var(--font-display);
+	font-size: 0.95rem;
+	color: var(--muted);
+	margin-bottom: 0.25rem;
+}
+
+.modal-meta {
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	color: var(--muted);
+	margin-bottom: 0.5rem;
+}
+
+.empty {
+	font-family: var(--font-mono);
+	font-size: 0.85rem;
+	color: var(--muted);
+	text-align: center;
+	padding: 4rem 0;
+}
+
+.page-status {
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	text-align: center;
+	color: var(--muted);
+	padding-top: 0.6rem;
+}
+
+button[key='page_prev'],
+button[key='page_next'] {
+	border: 1px solid var(--rule) !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	text-align: center !important;
+	justify-content: center !important;
+	padding: 0.5rem 1rem !important;
+}

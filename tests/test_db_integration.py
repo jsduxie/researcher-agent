@@ -483,6 +483,21 @@ def test_search_papers_returns_dict_shape_with_all_columns(conn):
 	assert paper['findings'] == 'f'
 	assert paper['relevance'] == 'r'
 	assert paper['limitations'] == 'l'
+	assert paper['latest_rating'] is None  # no rating recorded yet
+
+
+def test_search_papers_latest_rating_reflects_most_recent_rating(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_rating(conn, 'p1', 3)
+	db.insert_rating(conn, 'p1', 5)
+	(paper,) = db.search_papers(conn)
+	assert paper['latest_rating'] == 5
+
+
+def test_search_papers_latest_rating_is_none_when_no_ratings(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	(paper,) = db.search_papers(conn)
+	assert paper['latest_rating'] is None
 
 
 def test_search_papers_returns_papers_without_summaries(conn):

@@ -758,6 +758,7 @@ def test_search_papers_returns_list_of_dicts_with_expected_columns(mock_conn):
 			'f',
 			'r',
 			'l',
+			4,
 		)
 	]
 	result = db.search_papers(mock_conn)
@@ -777,8 +778,17 @@ def test_search_papers_returns_list_of_dicts_with_expected_columns(mock_conn):
 			'findings': 'f',
 			'relevance': 'r',
 			'limitations': 'l',
+			'latest_rating': 4,
 		}
 	]
+
+
+def test_search_papers_sql_includes_latest_rating_subquery(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn)
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'SELECT rating FROM ratings' in sql
+	assert 'AS latest_rating' in sql
 
 
 def test_search_papers_propagates_database_error(mock_conn):
