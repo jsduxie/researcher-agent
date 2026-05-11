@@ -11,11 +11,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Job-level env so `if: env.DATABASE_URL_TEST != ''` can gate the integration
-    # step. Fork PRs receive '' for missing secrets, which would otherwise cause
-    # db.connect('') to fail instead of cleanly skipping.
+    # Job-level env so the integration step can gate on whether each secret is
+    # present. Fork PRs receive '' for missing secrets, which would otherwise
+    # cause db.connect('') (or a live Gemini call with no key) to fail instead
+    # of cleanly skipping via each suite's own skipif.
     env:
       DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +40,7 @@ jobs:
         run: pytest -m 'not integration' --cov --cov-branch --cov-report=term
 
       - name: Integration tests
-        if: always() && env.DATABASE_URL_TEST != ''
+        if: always() && (env.DATABASE_URL_TEST != '' || env.GEMINI_API_KEY != '')
         run: pytest -m integration --cov-append --cov-branch --cov-report=term
 
       - name: Coverage reports
