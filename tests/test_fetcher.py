@@ -6,12 +6,12 @@ import requests
 import responses
 
 import fetcher
-from fetcher import _cutoff_year, dedup_papers, fetch_papers
+from fetcher import FetchError, _cutoff_year, dedup_papers, fetch_papers
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep(mocker):
-	mocker.patch('fetcher.time.sleep')
+	return mocker.patch('fetcher.time.sleep')
 
 
 # -- dedup_papers --
@@ -99,24 +99,96 @@ def test_fetch_papers_returns_empty_list_when_data_key_missing():
 
 
 @responses.activate
-def test_fetch_papers_returns_empty_list_on_http_500(capsys):
-	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'error': 'oops'}, status=500)
-	assert fetch_papers('query') == []
-	assert 'Error fetching' in capsys.readouterr().out
+def test_fetch_papers_raises_when_500_persists():
+	for _ in range(4):
+		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'error': 'oops'}, status=500)
+	with pytest.raises(FetchError):
+		fetch_papers('query')
+	assert len(responses.calls) == 4
 
 
 @responses.activate
-def test_fetch_papers_returns_empty_list_on_connection_error(capsys):
-	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.ConnectionError('boom'))
-	assert fetch_papers('query') == []
-	assert 'Error fetching' in capsys.readouterr().out
+def test_fetch_papers_raises_when_connection_error_persists():
+	for _ in range(4):
+		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.ConnectionError('boom'))
+	with pytest.raises(FetchError):
+		fetch_papers('query')
+	assert len(responses.calls) == 4
 
 
 @responses.activate
-def test_fetch_papers_returns_empty_list_on_timeout(capsys):
-	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.Timeout('slow'))
-	assert fetch_papers('query') == []
-	assert 'Error fetching' in capsys.readouterr().out
+def test_fetch_papers_raises_when_timeout_persists():
+	for _ in range(4):
+		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body=requests.Timeout('slow'))
+	with pytest.raises(FetchError):
+		fetch_papers('query')
+	assert len(responses.calls) == 4
+
+
+# -- retry on 429 / 5xx --
+
+
+@responses.activate
+def test_fetch_papers_retries_on_429_then_succeeds():
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': [{'paperId': 'a'}]})
+	assert fetch_papers('q') == [{'paperId': 'a'}]
+	assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_fetch_papers_retries_on_500_then_succeeds():
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=500)
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': [{'paperId': 'a'}]})
+	assert fetch_papers('q') == [{'paperId': 'a'}]
+	assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_fetch_papers_honours_retry_after_seconds(_no_sleep):
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429, headers={'Retry-After': '7'})
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
+	fetch_papers('q')
+	# 2s pre-call sleep, then 7s honoured from Retry-After instead of the 5s default.
+	delays = [c.args[0] for c in _no_sleep.call_args_list]
+	assert delays == [2, 7]
+
+
+@responses.activate
+def test_fetch_papers_ignores_non_integer_retry_after(_no_sleep):
+	# HTTP-date form is unsupported and falls back to the default backoff schedule.
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429, headers={'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT'})
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, json={'data': []})
+	fetch_papers('q')
+	delays = [c.args[0] for c in _no_sleep.call_args_list]
+	assert delays == [2, 5]
+
+
+@responses.activate
+def test_fetch_papers_raises_when_retries_exhausted():
+	for _ in range(4):
+		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
+	with pytest.raises(FetchError):
+		fetch_papers('q')
+	assert len(responses.calls) == 4
+
+
+@responses.activate
+def test_fetch_papers_does_not_retry_on_404():
+	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=404)
+	with pytest.raises(FetchError):
+		fetch_papers('q')
+	assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_fetch_papers_backoff_uses_expected_delays(_no_sleep):
+	for _ in range(4):
+		responses.get(fetcher.SEMANTIC_SCHOLAR_URL, status=429)
+	with pytest.raises(FetchError):
+		fetch_papers('q')
+	delays = [c.args[0] for c in _no_sleep.call_args_list]
+	assert delays == [2, 5, 15, 45]
 
 
 @responses.activate

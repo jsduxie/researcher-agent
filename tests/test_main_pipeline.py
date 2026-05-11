@@ -160,6 +160,19 @@ def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, 
 	mock_io['send'].assert_not_called()
 
 
+def test_live_run_swallows_fetch_error_and_finishes_run(mock_db, mock_io, mocker, capsys):
+	from fetcher import FetchError
+
+	mocker.patch('main.fetch_papers', side_effect=FetchError('rate limited'))
+	mock_io['score'].return_value = ([], set())
+
+	main.main([])
+
+	mock_db['finish_run'].assert_called_once()
+	mock_io['send'].assert_not_called()
+	assert 'Error fetching' in capsys.readouterr().out
+
+
 def test_live_run_propagates_when_scorer_raises_unhandled(mock_db, mock_io):
 	mock_io['score'].side_effect = RuntimeError('scorer boom')
 

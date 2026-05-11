@@ -8,7 +8,7 @@ import emailer
 import scorer
 import summariser
 from config import GEMINI_CALL_WARN_THRESHOLD, RELEVANCE_THRESHOLD, SEARCH_QUERIES
-from fetcher import dedup_papers, fetch_papers
+from fetcher import FetchError, dedup_papers, fetch_papers
 from render import build_email
 
 _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
@@ -19,7 +19,11 @@ GEMINI_CALL_COUNT = 0
 def _fetch(query):
 	if DRY_RUN:
 		return json.loads((_FIXTURES / 'papers.json').read_text())
-	return fetch_papers(query)
+	try:
+		return fetch_papers(query)
+	except FetchError as e:
+		print(f'Error fetching "{query}": {e}')
+		return []
 
 
 def _gemini_score(prompt, retries=3):
