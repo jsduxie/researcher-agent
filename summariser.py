@@ -99,20 +99,18 @@ def download_pdf(url, max_size_bytes):
 
 def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
 	# Resumable upload: first request announces metadata and gets an upload URL,
-	# second request uploads the bytes to that URL. This matches Gemini's
-	# documented two-step protocol for the Files API.
+	# second request uploads the bytes to that URL. Auth goes on x-goog-api-key
+	# rather than the URL so the key cannot leak through HTTPError messages.
 	start_headers = {
 		'X-Goog-Upload-Protocol': 'resumable',
 		'X-Goog-Upload-Command': 'start',
 		'X-Goog-Upload-Header-Content-Length': str(len(pdf_bytes)),
 		'X-Goog-Upload-Header-Content-Type': 'application/pdf',
 		'Content-Type': 'application/json',
+		'x-goog-api-key': api_key,
 	}
 	start = requests.post(
-		f'{GEMINI_FILES_UPLOAD_URL}?key={api_key}',
-		headers=start_headers,
-		json={'file': {'display_name': display_name}},
-		timeout=60,
+		GEMINI_FILES_UPLOAD_URL, headers=start_headers, json={'file': {'display_name': display_name}}, timeout=60
 	)
 	start.raise_for_status()
 	upload_url = start.headers.get('X-Goog-Upload-URL')
@@ -138,7 +136,7 @@ def generate_with_file(prompt, file_uri, api_key):
 			{'parts': [{'file_data': {'mime_type': 'application/pdf', 'file_uri': file_uri}}, {'text': prompt}]}
 		]
 	}
-	r = requests.post(f'{GEMINI_GENERATE_URL}?key={api_key}', json=body, timeout=120)
+	r = requests.post(GEMINI_GENERATE_URL, headers={'x-goog-api-key': api_key}, json=body, timeout=120)
 	r.raise_for_status()
 	try:
 		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()

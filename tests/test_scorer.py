@@ -1,5 +1,4 @@
 import json
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import requests
@@ -275,11 +274,13 @@ def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 
 
 @responses.activate
-def test_gemini_sends_api_key_in_query_string():
+def test_gemini_sends_api_key_in_header_not_url():
+	# Auth via header keeps the key out of any URL that may surface in HTTPError
+	# messages and downstream logs (PR #17 Copilot review).
 	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	gemini('prompt', 'my-secret-key')
-	qs = parse_qs(urlsplit(responses.calls[0].request.url).query)
-	assert qs['key'] == ['my-secret-key']
+	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
+	assert 'my-secret-key' not in responses.calls[0].request.url
 
 
 # -- hardening: parse_gemini_scores --

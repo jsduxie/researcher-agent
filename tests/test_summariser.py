@@ -432,11 +432,14 @@ def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
 
 
 @responses.activate
-def test_upload_pdf_to_gemini_sends_api_key_on_start_request():
+def test_upload_pdf_to_gemini_sends_api_key_in_header_not_url():
+	# Auth via header keeps the key out of any URL that may surface in HTTPError
+	# messages and downstream logs (PR #17 Copilot review).
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
-	upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'my-key')
-	assert 'key=my-key' in responses.calls[0].request.url
+	upload_pdf_to_gemini(b'pdf', 'my-key-value', 'my-key-value-secret')
+	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-key-value-secret'
+	assert 'my-key-value-secret' not in responses.calls[0].request.url
 
 
 @responses.activate
@@ -509,6 +512,16 @@ def test_generate_with_file_sends_file_data_and_prompt_parts():
 	parts = body['contents'][0]['parts']
 	assert parts[0] == {'file_data': {'mime_type': 'application/pdf', 'file_uri': 'files/abc'}}
 	assert parts[1] == {'text': 'the-prompt'}
+
+
+@responses.activate
+def test_generate_with_file_sends_api_key_in_header_not_url():
+	# Auth via header keeps the key out of any URL that may surface in HTTPError
+	# messages and downstream logs (PR #17 Copilot review).
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	generate_with_file('prompt', 'files/abc', 'my-secret-key')
+	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
+	assert 'my-secret-key' not in responses.calls[0].request.url
 
 
 @responses.activate
