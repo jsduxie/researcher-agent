@@ -89,6 +89,13 @@ def test_init_schema_includes_idempotent_migration_for_runs_query_columns(mock_c
 	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored' in executed_sql
 
 
+def test_init_schema_includes_summary_feedback_thumbs_to_rating_migration(mock_conn):
+	db.init_schema(mock_conn)
+	executed_sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'ALTER TABLE summary_feedback ADD COLUMN IF NOT EXISTS rating' in executed_sql
+	assert 'ALTER TABLE summary_feedback DROP COLUMN IF EXISTS thumbs' in executed_sql
+
+
 # -- upsert_paper --
 
 
@@ -572,3 +579,254 @@ def test_mark_scoring_results_retries_on_operational_error(mock_conn, mocker):
 	# Two executes on the fresh conn: increment + scored_at update.
 	assert _cursor(fresh_conn).execute.call_count == 2
 	mock_connect.assert_called_once()
+
+
+# -- insert_rating --
+
+
+def test_insert_rating_appends_row(mock_conn):
+	db.insert_rating(mock_conn, 'abc', 4)
+	call = _cursor(mock_conn).execute.call_args
+	assert 'INSERT INTO ratings' in call.args[0]
+	assert '(paper_id, rating)' in call.args[0]
+	assert call.args[1] == ('abc', 4)
+
+
+def test_insert_rating_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
+	with pytest.raises(RuntimeError, match='write boom'):
+		db.insert_rating(mock_conn, 'abc', 4)
+
+
+# -- insert_summary_feedback --
+
+
+def test_insert_summary_feedback_appends_row_with_all_fields(mock_conn):
+	db.insert_summary_feedback(mock_conn, 'abc', 'methodology', rating=5, correction='clearer please')
+	call = _cursor(mock_conn).execute.call_args
+	assert 'INSERT INTO summary_feedback' in call.args[0]
+	assert call.args[1] == ('abc', 'methodology', 5, 'clearer please')
+
+
+def test_insert_summary_feedback_defaults_rating_and_correction_to_none(mock_conn):
+	db.insert_summary_feedback(mock_conn, 'abc', 'findings')
+	assert _cursor(mock_conn).execute.call_args.args[1] == ('abc', 'findings', None, None)
+
+
+def test_insert_summary_feedback_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
+	with pytest.raises(RuntimeError, match='write boom'):
+		db.insert_summary_feedback(mock_conn, 'abc', 'findings', rating=3)
+
+
+# -- get_latest_rating --
+
+
+def test_get_latest_rating_selects_latest_row(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (5,)
+	assert db.get_latest_rating(mock_conn, 'abc') == 5
+	call = _cursor(mock_conn).execute.call_args
+	# ORDER BY created_at DESC + id DESC tiebreak keeps ordering stable across rows inserted in the same millisecond (important for UI prefill).
+	assert 'ORDER BY created_at DESC, id DESC LIMIT 1' in call.args[0]
+	assert call.args[1] == ('abc',)
+
+
+def test_get_latest_rating_returns_none_when_no_rows(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = None
+	assert db.get_latest_rating(mock_conn, 'abc') is None
+
+
+def test_get_latest_rating_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.get_latest_rating(mock_conn, 'abc')
+
+
+# -- get_latest_field_feedback --
+
+
+def test_get_latest_field_feedback_returns_dict_keyed_by_field(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [('methodology', 5, None), ('findings', 3, 'expand more')]
+	result = db.get_latest_field_feedback(mock_conn, 'abc')
+	assert result == {
+		'methodology': {'rating': 5, 'correction': None},
+		'findings': {'rating': 3, 'correction': 'expand more'},
+	}
+
+
+def test_get_latest_field_feedback_uses_distinct_on_field(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.get_latest_field_feedback(mock_conn, 'abc')
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'DISTINCT ON (field)' in sql
+	assert 'ORDER BY field, created_at DESC, id DESC' in sql
+
+
+def test_get_latest_field_feedback_returns_empty_dict_when_no_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.get_latest_field_feedback(mock_conn, 'abc') == {}
+
+
+def test_get_latest_field_feedback_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.get_latest_field_feedback(mock_conn, 'abc')
+
+
+# -- search_papers --
+
+
+def test_search_papers_with_no_filters_omits_where(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn)
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	# The inner authors subquery legitimately uses WHERE; the outer filter references papers.fetched_at / .title / .abstract, so absence of those is the signal.
+	assert 'papers.fetched_at >=' not in sql
+	assert 'papers.fetched_at <=' not in sql
+	assert 'papers.title ILIKE' not in sql
+	assert 'ORDER BY papers.fetched_at DESC' in sql
+	assert 'LIMIT %s OFFSET %s' in sql
+
+
+def test_search_papers_passes_limit_and_offset_as_trailing_params(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn, limit=10, offset=20)
+	params = _cursor(mock_conn).execute.call_args.args[1]
+	assert params[-2:] == [10, 20]
+
+
+def test_search_papers_with_query_adds_ilike_clauses_for_title_and_abstract(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn, q='bpd')
+	call = _cursor(mock_conn).execute.call_args
+	assert 'ILIKE' in call.args[0]
+	assert 'papers.title ILIKE' in call.args[0]
+	assert 'papers.abstract ILIKE' in call.args[0]
+	# Two %bpd% bindings for title and abstract.
+	assert call.args[1][0] == '%bpd%'
+	assert call.args[1][1] == '%bpd%'
+
+
+def test_search_papers_with_date_range_adds_filter_clauses(mock_conn):
+	from datetime import date
+
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn, date_range=db.DateRange(since=date(2026, 1, 1), until=date(2026, 5, 1)))
+	call = _cursor(mock_conn).execute.call_args
+	assert 'papers.fetched_at >= %s' in call.args[0]
+	assert 'papers.fetched_at <= %s' in call.args[0]
+	assert date(2026, 1, 1) in call.args[1]
+	assert date(2026, 5, 1) in call.args[1]
+
+
+def test_search_papers_with_only_lower_bound_adds_since_clause(mock_conn):
+	from datetime import date
+
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn, date_range=db.DateRange(since=date(2026, 1, 1)))
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'papers.fetched_at >= %s' in sql
+	assert 'papers.fetched_at <= %s' not in sql
+
+
+def test_search_papers_with_only_upper_bound_adds_until_clause(mock_conn):
+	from datetime import date
+
+	_cursor(mock_conn).fetchall.return_value = []
+	db.search_papers(mock_conn, date_range=db.DateRange(until=date(2026, 5, 1)))
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'papers.fetched_at <= %s' in sql
+	assert 'papers.fetched_at >= %s' not in sql
+
+
+def test_search_papers_returns_list_of_dicts_with_expected_columns(mock_conn):
+	from datetime import datetime
+
+	_cursor(mock_conn).fetchall.return_value = [
+		(
+			'p1',
+			'T',
+			'A',
+			2024,
+			5,
+			'https://u',
+			'10.1/x',
+			'https://x/p.pdf',
+			datetime(2026, 5, 1),
+			['Smith J.'],
+			'm',
+			'f',
+			'r',
+			'l',
+		)
+	]
+	result = db.search_papers(mock_conn)
+	assert result == [
+		{
+			'paper_id': 'p1',
+			'title': 'T',
+			'abstract': 'A',
+			'year': 2024,
+			'citation_count': 5,
+			'url': 'https://u',
+			'doi': '10.1/x',
+			'pdf_url': 'https://x/p.pdf',
+			'fetched_at': datetime(2026, 5, 1),
+			'authors': ['Smith J.'],
+			'methodology': 'm',
+			'findings': 'f',
+			'relevance': 'r',
+			'limitations': 'l',
+		}
+	]
+
+
+def test_search_papers_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.search_papers(mock_conn)
+
+
+# -- count_papers --
+
+
+def test_count_papers_returns_total_count(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (42,)
+	assert db.count_papers(mock_conn) == 42
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'SELECT COUNT(*) FROM papers' in sql
+	assert 'WHERE' not in sql
+
+
+def test_count_papers_applies_same_filters_as_search(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (3,)
+	db.count_papers(mock_conn, q='bpd')
+	call = _cursor(mock_conn).execute.call_args
+	assert 'papers.title ILIKE' in call.args[0]
+	assert call.args[1][0] == '%bpd%'
+
+
+# -- list_runs --
+
+
+def test_list_runs_returns_rows_ordered_by_started_at_desc(mock_conn):
+	from datetime import datetime
+
+	_cursor(mock_conn).fetchall.return_value = [
+		(2, datetime(2026, 5, 2), datetime(2026, 5, 2), 50, 5, 8, 0),
+		(1, datetime(2026, 5, 1), datetime(2026, 5, 1), 40, 3, 8, 1),
+	]
+	result = db.list_runs(mock_conn, limit=10)
+	call = _cursor(mock_conn).execute.call_args
+	assert 'ORDER BY started_at DESC' in call.args[0]
+	assert call.args[1] == (10,)
+	assert len(result) == 2
+	assert result[0]['id'] == 2
+	assert result[0]['papers_kept'] == 5
+	assert result[1]['queries_errored'] == 1
+
+
+def test_list_runs_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.list_runs(mock_conn)

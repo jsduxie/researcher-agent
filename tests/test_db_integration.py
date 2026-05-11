@@ -1,4 +1,5 @@
 import os
+from datetime import UTC
 
 import pytest
 
@@ -353,3 +354,245 @@ def test_paper_with_failed_gemini_run_is_retried_on_next_run(conn):
 	with conn.cursor() as cur:
 		cur.execute('SELECT score_attempts FROM papers WHERE paper_id = %s', ('p1',))
 		assert cur.fetchone()[0] == 2  # incremented once per run
+
+
+# -- ratings (append-only event log) --
+
+
+def test_insert_rating_persists_row(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_rating(conn, 'p1', 4)
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id, rating FROM ratings WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone() == ('p1', 4)
+
+
+def test_insert_rating_appends_rather_than_replaces(conn):
+	# Reviews are a log so the user can change their mind without erasing prior signal.
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_rating(conn, 'p1', 2)
+	db.insert_rating(conn, 'p1', 5)
+	with conn.cursor() as cur:
+		cur.execute('SELECT rating FROM ratings WHERE paper_id = %s ORDER BY id', ('p1',))
+		assert [r[0] for r in cur.fetchall()] == [2, 5]
+
+
+def test_insert_rating_rejects_value_outside_one_to_five(conn):
+	import psycopg
+
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	with pytest.raises(psycopg.errors.CheckViolation):
+		db.insert_rating(conn, 'p1', 0)
+
+
+def test_get_latest_rating_returns_most_recent_value(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_rating(conn, 'p1', 3)
+	db.insert_rating(conn, 'p1', 1)
+	db.insert_rating(conn, 'p1', 5)
+	assert db.get_latest_rating(conn, 'p1') == 5
+
+
+def test_get_latest_rating_returns_none_when_no_rows(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	assert db.get_latest_rating(conn, 'p1') is None
+
+
+# -- summary_feedback (per-field rating + correction) --
+
+
+def test_insert_summary_feedback_persists_rating_and_correction(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_summary_feedback(conn, 'p1', 'methodology', rating=4, correction='more detail on dataset')
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id, field, rating, correction FROM summary_feedback WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone() == ('p1', 'methodology', 4, 'more detail on dataset')
+
+
+def test_insert_summary_feedback_allows_correction_only(conn):
+	# Optional rating: a user can leave a comment without scoring the section.
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_summary_feedback(conn, 'p1', 'findings', correction='cite Smith 2024')
+	with conn.cursor() as cur:
+		cur.execute('SELECT rating, correction FROM summary_feedback WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone() == (None, 'cite Smith 2024')
+
+
+def test_insert_summary_feedback_rejects_rating_outside_one_to_five(conn):
+	import psycopg
+
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	with pytest.raises(psycopg.errors.CheckViolation):
+		db.insert_summary_feedback(conn, 'p1', 'methodology', rating=6)
+
+
+def test_get_latest_field_feedback_returns_one_row_per_field(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.insert_summary_feedback(conn, 'p1', 'methodology', rating=2)
+	db.insert_summary_feedback(conn, 'p1', 'methodology', rating=4, correction='better')
+	db.insert_summary_feedback(conn, 'p1', 'findings', rating=5)
+	result = db.get_latest_field_feedback(conn, 'p1')
+	assert result == {
+		'methodology': {'rating': 4, 'correction': 'better'},
+		'findings': {'rating': 5, 'correction': None},
+	}
+
+
+def test_get_latest_field_feedback_returns_empty_dict_when_no_rows(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	assert db.get_latest_field_feedback(conn, 'p1') == {}
+
+
+# -- search_papers --
+
+
+def test_search_papers_returns_all_when_no_filters(conn):
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'first'})
+	db.upsert_paper(conn, {'paperId': 'p2', 'title': 'second'})
+	result = db.search_papers(conn)
+	assert {p['paper_id'] for p in result} == {'p1', 'p2'}
+
+
+def test_search_papers_returns_dict_shape_with_all_columns(conn):
+	db.upsert_paper(
+		conn,
+		{
+			'paperId': 'p1',
+			'title': 'T',
+			'abstract': 'A',
+			'year': 2024,
+			'citationCount': 7,
+			'url': 'https://u',
+			'externalIds': {'DOI': '10.1/x'},
+			'openAccessPdf': {'url': 'https://x.pdf'},
+			'authors': [{'name': 'Smith J.'}, {'name': 'Doe A.'}],
+		},
+	)
+	db.upsert_summary(conn, 'p1', {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}, 'v1')
+	(paper,) = db.search_papers(conn)
+	assert paper['paper_id'] == 'p1'
+	assert paper['title'] == 'T'
+	assert paper['abstract'] == 'A'
+	assert paper['year'] == 2024
+	assert paper['citation_count'] == 7
+	assert paper['url'] == 'https://u'
+	assert paper['doi'] == '10.1/x'
+	assert paper['pdf_url'] == 'https://x.pdf'
+	assert paper['authors'] == ['Smith J.', 'Doe A.']
+	assert paper['methodology'] == 'm'
+	assert paper['findings'] == 'f'
+	assert paper['relevance'] == 'r'
+	assert paper['limitations'] == 'l'
+
+
+def test_search_papers_returns_papers_without_summaries(conn):
+	# LEFT JOIN: papers with no summaries row still appear, with summary fields as None.
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'no summary yet'})
+	(paper,) = db.search_papers(conn)
+	assert paper['methodology'] is None
+	assert paper['findings'] is None
+
+
+def test_search_papers_returns_empty_authors_list_when_none_stored(conn):
+	# array_agg over an empty subquery returns NULL; the COALESCE turns it into [].
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'lonely'})
+	(paper,) = db.search_papers(conn)
+	assert paper['authors'] == []
+
+
+def test_search_papers_filters_by_query_against_title_and_abstract(conn):
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'Borderline classification', 'abstract': 'unrelated'})
+	db.upsert_paper(conn, {'paperId': 'p2', 'title': 'unrelated', 'abstract': 'discusses BPD detection'})
+	db.upsert_paper(conn, {'paperId': 'p3', 'title': 'transformers', 'abstract': 'attention is all you need'})
+	result = db.search_papers(conn, q='bpd')
+	assert {p['paper_id'] for p in result} == {'p1', 'p2'}
+
+
+def test_search_papers_query_is_case_insensitive(conn):
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'Borderline Personality Disorder'})
+	assert {p['paper_id'] for p in db.search_papers(conn, q='borderline')} == {'p1'}
+
+
+def test_search_papers_filters_by_date_range(conn):
+	# fetched_at defaults to NOW(), so set it explicitly to test the filter.
+	from datetime import datetime
+
+	db.upsert_paper(conn, {'paperId': 'old', 'title': 'old'})
+	db.upsert_paper(conn, {'paperId': 'new', 'title': 'new'})
+	with conn.cursor() as cur:
+		cur.execute('UPDATE papers SET fetched_at = %s WHERE paper_id = %s', (datetime(2026, 1, 1, tzinfo=UTC), 'old'))
+		cur.execute('UPDATE papers SET fetched_at = %s WHERE paper_id = %s', (datetime(2026, 5, 1, tzinfo=UTC), 'new'))
+	since = datetime(2026, 3, 1, tzinfo=UTC)
+	until = datetime(2026, 6, 1, tzinfo=UTC)
+	assert {p['paper_id'] for p in db.search_papers(conn, date_range=db.DateRange(since, until))} == {'new'}
+
+
+def test_search_papers_orders_by_fetched_at_descending(conn):
+	from datetime import datetime
+
+	db.upsert_paper(conn, {'paperId': 'a'})
+	db.upsert_paper(conn, {'paperId': 'b'})
+	with conn.cursor() as cur:
+		cur.execute('UPDATE papers SET fetched_at = %s WHERE paper_id = %s', (datetime(2026, 1, 1, tzinfo=UTC), 'a'))
+		cur.execute('UPDATE papers SET fetched_at = %s WHERE paper_id = %s', (datetime(2026, 5, 1, tzinfo=UTC), 'b'))
+	result = db.search_papers(conn)
+	assert [p['paper_id'] for p in result] == ['b', 'a']
+
+
+def test_search_papers_respects_limit_and_offset(conn):
+	for i in range(5):
+		db.upsert_paper(conn, {'paperId': f'p{i}'})
+	page1 = db.search_papers(conn, limit=2, offset=0)
+	page2 = db.search_papers(conn, limit=2, offset=2)
+	page3 = db.search_papers(conn, limit=2, offset=4)
+	assert len(page1) == 2
+	assert len(page2) == 2
+	assert len(page3) == 1
+	# No overlap across pages.
+	assert not ({p['paper_id'] for p in page1} & {p['paper_id'] for p in page2})
+
+
+# -- count_papers --
+
+
+def test_count_papers_matches_unfiltered_search(conn):
+	for i in range(3):
+		db.upsert_paper(conn, {'paperId': f'p{i}'})
+	assert db.count_papers(conn) == 3
+
+
+def test_count_papers_applies_query_filter(conn):
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'BPD detection'})
+	db.upsert_paper(conn, {'paperId': 'p2', 'title': 'unrelated'})
+	assert db.count_papers(conn, q='bpd') == 1
+
+
+# -- list_runs --
+
+
+def test_list_runs_returns_runs_latest_first(conn):
+	r1 = db.start_run(conn, papers_fetched=10)
+	r2 = db.start_run(conn, papers_fetched=20)
+	r3 = db.start_run(conn, papers_fetched=30)
+	result = db.list_runs(conn)
+	# BIGSERIAL is monotonically increasing and started_at defaults to NOW(), so the latest run id is the latest run by start time.
+	assert [r['id'] for r in result] == [r3, r2, r1]
+
+
+def test_list_runs_returns_full_row_shape(conn):
+	run_id = db.start_run(conn, papers_fetched=42)
+	db.finish_run(conn, run_id, papers_kept=7, queries_attempted=8, queries_errored=1)
+	(run,) = db.list_runs(conn)
+	assert run['id'] == run_id
+	assert run['papers_fetched'] == 42
+	assert run['papers_kept'] == 7
+	assert run['queries_attempted'] == 8
+	assert run['queries_errored'] == 1
+	assert run['started_at'] is not None
+	assert run['finished_at'] is not None
+
+
+def test_list_runs_respects_limit(conn):
+	for _ in range(5):
+		db.start_run(conn, papers_fetched=0)
+	assert len(db.list_runs(conn, limit=3)) == 3

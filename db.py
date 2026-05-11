@@ -1,8 +1,16 @@
 import functools
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import psycopg
+
+
+class DateRange(NamedTuple):
+	since: datetime | None = None
+	until: datetime | None = None
+
 
 _SCHEMA_PATH = Path(__file__).parent / 'db' / 'schema.sql'
 
@@ -174,3 +182,147 @@ def mark_scoring_results(conn, attempted, responded):
 		cur.execute('UPDATE papers SET score_attempts = score_attempts + 1 WHERE paper_id = ANY(%s)', (attempted_list,))
 		if responded_list:
 			cur.execute('UPDATE papers SET scored_at = NOW() WHERE paper_id = ANY(%s)', (responded_list,))
+
+
+# -- review writes (append-only event log; readers select the latest row) --
+
+
+def insert_rating(conn, paper_id, rating):
+	with conn.cursor() as cur:
+		cur.execute('INSERT INTO ratings (paper_id, rating) VALUES (%s, %s)', (paper_id, rating))
+
+
+def insert_summary_feedback(conn, paper_id, field, rating=None, correction=None):
+	with conn.cursor() as cur:
+		cur.execute(
+			'INSERT INTO summary_feedback (paper_id, field, rating, correction) VALUES (%s, %s, %s, %s)',
+			(paper_id, field, rating, correction),
+		)
+
+
+def get_latest_rating(conn, paper_id):
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT rating FROM ratings WHERE paper_id = %s ORDER BY created_at DESC, id DESC LIMIT 1', (paper_id,)
+		)
+		row = cur.fetchone()
+	return row[0] if row else None
+
+
+def get_latest_field_feedback(conn, paper_id):
+	# DISTINCT ON keeps only the first row per field given the ORDER BY, so callers see one (rating, correction) per field with the latest write winning.
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT DISTINCT ON (field) field, rating, correction '
+			'FROM summary_feedback WHERE paper_id = %s '
+			'ORDER BY field, created_at DESC, id DESC',
+			(paper_id,),
+		)
+		rows = cur.fetchall()
+	return {field: {'rating': rating, 'correction': correction} for field, rating, correction in rows}
+
+
+# -- search and history reads --
+
+
+_SEARCH_PAPERS_COLUMNS = (
+	'paper_id',
+	'title',
+	'abstract',
+	'year',
+	'citation_count',
+	'url',
+	'doi',
+	'pdf_url',
+	'fetched_at',
+	'authors',
+	'methodology',
+	'findings',
+	'relevance',
+	'limitations',
+)
+
+_SEARCH_PAPERS_SQL = """
+SELECT
+	papers.paper_id,
+	papers.title,
+	papers.abstract,
+	papers.year,
+	papers.citation_count,
+	papers.url,
+	papers.doi,
+	papers.pdf_url,
+	papers.fetched_at,
+	COALESCE(
+		(SELECT array_agg(name ORDER BY position) FROM paper_authors WHERE paper_id = papers.paper_id),
+		ARRAY[]::TEXT[]
+	) AS authors,
+	summaries.methodology,
+	summaries.findings,
+	summaries.relevance,
+	summaries.limitations
+FROM papers
+LEFT JOIN summaries ON papers.paper_id = summaries.paper_id
+{where_clause}
+ORDER BY papers.fetched_at DESC
+LIMIT %s OFFSET %s
+"""
+
+_LIST_RUNS_COLUMNS = (
+	'id',
+	'started_at',
+	'finished_at',
+	'papers_fetched',
+	'papers_kept',
+	'queries_attempted',
+	'queries_errored',
+)
+
+
+def _build_search_filters(q, date_range):
+	since, until = date_range if date_range else DateRange()
+	clauses = []
+	params = []
+	if q:
+		clauses.append('(papers.title ILIKE %s OR papers.abstract ILIKE %s)')
+		like = f'%{q}%'
+		params.extend([like, like])
+	if since is not None:
+		clauses.append('papers.fetched_at >= %s')
+		params.append(since)
+	if until is not None:
+		clauses.append('papers.fetched_at <= %s')
+		params.append(until)
+	return clauses, params
+
+
+def search_papers(conn, q=None, date_range=None, limit=20, offset=0):
+	# date_range is a DateRange (or a (since, until) tuple); either bound may be None.
+	clauses, params = _build_search_filters(q, date_range)
+	where_clause = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+	sql = _SEARCH_PAPERS_SQL.format(where_clause=where_clause)
+	params.extend([limit, offset])
+	with conn.cursor() as cur:
+		cur.execute(sql, params)
+		rows = cur.fetchall()
+	return [dict(zip(_SEARCH_PAPERS_COLUMNS, row, strict=True)) for row in rows]
+
+
+def count_papers(conn, q=None, date_range=None):
+	clauses, params = _build_search_filters(q, date_range)
+	where_clause = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+	sql = f'SELECT COUNT(*) FROM papers{where_clause}'
+	with conn.cursor() as cur:
+		cur.execute(sql, params)
+		return cur.fetchone()[0]
+
+
+def list_runs(conn, limit=50):
+	with conn.cursor() as cur:
+		cur.execute(
+			'SELECT id, started_at, finished_at, papers_fetched, papers_kept, queries_attempted, queries_errored '
+			'FROM runs ORDER BY started_at DESC LIMIT %s',
+			(limit,),
+		)
+		rows = cur.fetchall()
+	return [dict(zip(_LIST_RUNS_COLUMNS, row, strict=True)) for row in rows]

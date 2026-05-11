@@ -63,7 +63,12 @@ CREATE TABLE IF NOT EXISTS summary_feedback (
 	id BIGSERIAL PRIMARY KEY,
 	paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
 	field TEXT NOT NULL,
-	thumbs INTEGER NOT NULL CHECK (thumbs IN (-1, 1)),
+	rating INTEGER CHECK (rating BETWEEN 1 AND 5),
 	correction TEXT,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migration from the thumbs (-1/+1) column used before the review UI shipped. The two
+-- scales are not semantically equivalent, so no data is preserved across the change.
+ALTER TABLE summary_feedback ADD COLUMN IF NOT EXISTS rating INTEGER;
+ALTER TABLE summary_feedback DROP COLUMN IF EXISTS thumbs;
