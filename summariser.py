@@ -5,13 +5,20 @@ import time
 import requests
 
 import db
-from config import PDF_MAX_SIZE_MB, RESEARCH_CONTEXT, SUMMARISER_PROMPT
+from config import (
+	GEMINI_BASE_URL,
+	GEMINI_MODEL,
+	GEMINI_UPLOAD_BASE_URL,
+	PDF_MAX_SIZE_MB,
+	RESEARCH_CONTEXT,
+	SUMMARISER_PROMPT,
+)
 
-MODEL_VERSION = 'gemini-2.5-flash'
+MODEL_VERSION = GEMINI_MODEL
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
 
-GEMINI_GENERATE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
-GEMINI_FILES_UPLOAD_URL = 'https://generativelanguage.googleapis.com/upload/v1beta/files'
+GEMINI_GENERATE_URL = f'{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent'
+GEMINI_FILES_UPLOAD_URL = f'{GEMINI_UPLOAD_BASE_URL}/files'
 
 GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 GEMINI_BACKOFF_DELAYS = (5, 15, 45)
