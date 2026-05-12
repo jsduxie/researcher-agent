@@ -26,13 +26,15 @@ def _is_quota_exhausted(response):
 	return 'RESOURCE_EXHAUSTED' in (response.text or '')
 
 
-def gemini(prompt, api_key, retries=3):
+def gemini(prompt, api_key, retries=3, on_attempt=None):
 	# Auth via header rather than ?key= query param keeps the secret out of any
 	# URL that may surface in HTTPError messages and downstream logs.
 	headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
 
 	for attempt in range(retries):
+		if on_attempt:
+			on_attempt()
 		time.sleep(5)
 		r = requests.post(GEMINI_URL, headers=headers, json=body, timeout=120)
 		if r.status_code == 429:

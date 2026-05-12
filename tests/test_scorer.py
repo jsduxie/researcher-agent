@@ -475,3 +475,35 @@ def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
 	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
 	assert responded == {'p1'}
 	assert 'Quota exhausted' in capsys.readouterr().out
+
+
+# -- on_attempt callback (per-attempt counting) --
+
+
+@responses.activate
+def test_gemini_fires_on_attempt_once_per_retry_iteration():
+	# Three regular 429s exhaust retries; on_attempt fires once per attempt = 3.
+	for _ in range(3):
+		responses.post(scorer.GEMINI_URL, json={'error': 'rate limited'}, status=429)
+	counter = []
+	with pytest.raises(Exception, match='Gemini failed after retries'):
+		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
+	assert len(counter) == 3
+
+
+@responses.activate
+def test_gemini_fires_on_attempt_once_on_immediate_success():
+	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	counter = []
+	gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
+	assert len(counter) == 1
+
+
+@responses.activate
+def test_gemini_fires_on_attempt_before_quota_exhausted_raise():
+	# The failing attempt counts even though it raises GeminiQuotaExhausted.
+	responses.post(scorer.GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	counter = []
+	with pytest.raises(GeminiQuotaExhausted):
+		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
+	assert len(counter) == 1

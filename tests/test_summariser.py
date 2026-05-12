@@ -288,10 +288,12 @@ def test_module_version_is_set():
 	assert summariser.MODEL_VERSION
 
 
-# -- on_gemini_call callback --
+# -- on_gemini_call callback (per-attempt for PDF path; abstract path counts inside gemini_fn) --
 
 
-def test_on_gemini_call_fires_once_for_abstract_path(mocker):
+def test_on_gemini_call_does_not_fire_for_abstract_path_via_summarise_paper(mocker):
+	# Abstract path no longer relays on_gemini_call; the counter fires inside gemini_fn
+	# (scorer.gemini's on_attempt, wired by main). Mocked gemini_fn here, so 0 fires.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
@@ -299,7 +301,7 @@ def test_on_gemini_call_fires_once_for_abstract_path(mocker):
 
 	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
 
-	counter.assert_called_once()
+	counter.assert_not_called()
 
 
 def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
@@ -315,9 +317,9 @@ def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
 	counter.assert_not_called()
 
 
-def test_on_gemini_call_does_not_fire_when_gemini_raises(mocker):
-	# The call never returned a body, so quota wasn't consumed at the model layer.
-	# A transient network error shouldn't be counted.
+def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
+	# gemini_fn is mocked and raises; the abstract path doesn't relay on_gemini_call,
+	# so it stays at 0 fires. Real per-attempt firing inside scorer.gemini is in test_scorer.py.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
 	counter = mocker.Mock()
@@ -328,7 +330,9 @@ def test_on_gemini_call_does_not_fire_when_gemini_raises(mocker):
 
 
 @responses.activate
-def test_on_gemini_call_fires_once_for_pdf_path(mocker):
+def test_on_gemini_call_fires_per_gemini_attempt_in_pdf_path(mocker):
+	# PDF success path fires per attempt of upload-init + generate (the signed-URL
+	# data upload is not a Gemini API call). One attempt each on the happy path = 2.
 	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
@@ -347,13 +351,13 @@ def test_on_gemini_call_fires_once_for_pdf_path(mocker):
 		on_gemini_call=counter,
 	)
 
-	counter.assert_called_once()
+	assert counter.call_count == 2
 
 
 @responses.activate
-def test_on_gemini_call_fires_only_once_when_pdf_fails_then_abstract_succeeds(mocker):
-	# Download fails before any model call; the fallback abstract call is the
-	# only one that actually consumes quota.
+def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mocker):
+	# PDF download fails before any _post_with_retry, so 0 fires from PDF path.
+	# Abstract fallback uses mocked gemini_fn which doesn't fire on_attempt internally.
 	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
@@ -368,7 +372,18 @@ def test_on_gemini_call_fires_only_once_when_pdf_fails_then_abstract_succeeds(mo
 		on_gemini_call=counter,
 	)
 
-	counter.assert_called_once()
+	counter.assert_not_called()
+
+
+@responses.activate
+def test_post_with_retry_fires_on_attempt_per_iteration_via_generate_with_file():
+	# Two 500s then success: on_attempt fires once per iteration of _post_with_retry.
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	counter = []
+	generate_with_file('p', 'files/abc', 'k', on_attempt=lambda: counter.append(1))
+	assert len(counter) == 3
 
 
 # -- download_pdf --

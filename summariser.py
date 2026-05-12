@@ -48,7 +48,7 @@ def summarise_paper(paper, gemini_fn, conn=None, api_key=None, on_gemini_call=No
 		fields = _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call)
 
 	if fields is None:
-		fields = _summarise_via_abstract(paper, gemini_fn, on_gemini_call)
+		fields = _summarise_via_abstract(paper, gemini_fn)
 
 	if fields is None:
 		return None
@@ -60,17 +60,15 @@ def summarise_paper(paper, gemini_fn, conn=None, api_key=None, on_gemini_call=No
 
 
 def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
+	# `on_gemini_call` fires per attempt of each Gemini API call (Files API upload-init
+	# and generateContent), not once per success. Transport-error attempts count too.
 	try:
 		max_bytes = PDF_MAX_SIZE_MB * 1024 * 1024
 		pdf_bytes = download_pdf(pdf_url, max_bytes)
 		display_name = f'{(title or "paper")[:50]}.pdf'
-		file_uri = upload_pdf_to_gemini(pdf_bytes, display_name, api_key)
+		file_uri = upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=on_gemini_call)
 		prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material='See the attached PDF.')
-		response = generate_with_file(prompt, file_uri, api_key)
-		# Fire the counter only after the call returned a body; network errors before
-		# this point did not consume model quota.
-		if on_gemini_call:
-			on_gemini_call()
+		response = generate_with_file(prompt, file_uri, api_key, on_attempt=on_gemini_call)
 		return parse_summary_response(response)
 	except GeminiQuotaExhausted:
 		raise
@@ -79,7 +77,9 @@ def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 		return None
 
 
-def _summarise_via_abstract(paper, gemini_fn, on_gemini_call):
+def _summarise_via_abstract(paper, gemini_fn):
+	# The abstract-path counter is fired inside gemini_fn (main wires scorer.gemini's
+	# on_attempt directly); nothing to fire here.
 	title = (paper.get('title') or '')[:60]
 	abstract = paper.get('abstract')
 	if not abstract:
@@ -89,8 +89,6 @@ def _summarise_via_abstract(paper, gemini_fn, on_gemini_call):
 	prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material=source_material)
 	try:
 		response = gemini_fn(prompt)
-		if on_gemini_call:
-			on_gemini_call()
 		return parse_summary_response(response)
 	except GeminiQuotaExhausted:
 		raise
@@ -111,12 +109,14 @@ def _retry_after_seconds(response):
 		return None
 
 
-def _post_with_retry(url, **kwargs):
+def _post_with_retry(url, on_attempt=None, **kwargs):
 	# Retries 429 and 5xx with backoff. After exhaustion returns the final
 	# failed response so the caller's raise_for_status surfaces it consistently
 	# with the non-retry code path.
 	last = None
 	for attempt in range(len(GEMINI_BACKOFF_DELAYS) + 1):
+		if on_attempt:
+			on_attempt()
 		last = requests.post(url, **kwargs)
 		if last.status_code == 429 and _is_quota_exhausted(last):
 			raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
@@ -143,7 +143,7 @@ def download_pdf(url, max_size_bytes):
 		return bytes(buffer)
 
 
-def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
+def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=None):
 	# Resumable upload: first request announces metadata and gets an upload URL,
 	# second request uploads the bytes to that URL. Auth goes on x-goog-api-key
 	# rather than the URL so the key cannot leak through HTTPError messages.
@@ -155,8 +155,13 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
 		'Content-Type': 'application/json',
 		'x-goog-api-key': api_key,
 	}
+	# Files API upload-init is a Gemini API call; the signed-URL upload below is not.
 	start = _post_with_retry(
-		GEMINI_FILES_UPLOAD_URL, headers=start_headers, json={'file': {'display_name': display_name}}, timeout=60
+		GEMINI_FILES_UPLOAD_URL,
+		on_attempt=on_attempt,
+		headers=start_headers,
+		json={'file': {'display_name': display_name}},
+		timeout=60,
 	)
 	start.raise_for_status()
 	upload_url = start.headers.get('X-Goog-Upload-URL')
@@ -176,13 +181,15 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key):
 		raise ValueError(f'Upload response missing file.uri: {e}') from e
 
 
-def generate_with_file(prompt, file_uri, api_key):
+def generate_with_file(prompt, file_uri, api_key, on_attempt=None):
 	body = {
 		'contents': [
 			{'parts': [{'file_data': {'mime_type': 'application/pdf', 'file_uri': file_uri}}, {'text': prompt}]}
 		]
 	}
-	r = _post_with_retry(GEMINI_GENERATE_URL, headers={'x-goog-api-key': api_key}, json=body, timeout=120)
+	r = _post_with_retry(
+		GEMINI_GENERATE_URL, on_attempt=on_attempt, headers={'x-goog-api-key': api_key}, json=body, timeout=120
+	)
 	r.raise_for_status()
 	try:
 		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
