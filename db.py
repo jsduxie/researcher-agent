@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
@@ -37,6 +38,15 @@ _SUMMARY_COLUMNS = ('methodology', 'findings', 'relevance', 'limitations', 'mode
 def connect(database_url):
 	# autocommit and prepare_threshold=None keep us compatible with Neon's PgBouncer pooler.
 	return psycopg.connect(database_url, autocommit=True, prepare_threshold=None)
+
+
+@contextmanager
+def session(database_url):
+	conn = connect(database_url)
+	try:
+		yield conn
+	finally:
+		conn.close()
 
 
 def init_schema(conn):

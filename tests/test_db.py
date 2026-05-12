@@ -30,6 +30,38 @@ def test_connect_returns_psycopg_connection(mocker):
 	assert result is mock_psycopg_connect.return_value
 
 
+# -- session --
+
+
+def test_session_yields_connection_from_connect(mocker):
+	mock_psycopg_connect = mocker.patch('db.psycopg.connect')
+	with db.session('postgresql://x') as conn:
+		assert conn is mock_psycopg_connect.return_value
+	mock_psycopg_connect.assert_called_once_with('postgresql://x', autocommit=True, prepare_threshold=None)
+
+
+def test_session_closes_connection_on_normal_exit(mocker):
+	mock_conn = mocker.patch('db.psycopg.connect').return_value
+	with db.session('postgresql://x'):
+		pass
+	mock_conn.close.assert_called_once()
+
+
+def test_session_closes_and_propagates_on_body_exception(mocker):
+	mock_conn = mocker.patch('db.psycopg.connect').return_value
+	with pytest.raises(RuntimeError, match='boom'), db.session('postgresql://x'):
+		raise RuntimeError('boom')
+	mock_conn.close.assert_called_once()
+
+
+def test_session_propagates_connect_failure(mocker):
+	import psycopg
+
+	mocker.patch('db.psycopg.connect', side_effect=psycopg.OperationalError('refused'))
+	with pytest.raises(psycopg.OperationalError, match='refused'), db.session('postgresql://bad'):
+		pass
+
+
 # -- init_schema --
 
 
