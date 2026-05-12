@@ -26,6 +26,8 @@ RELEVANCE_THRESHOLD = _digest['relevance_threshold']
 DAYS_BACK = _digest['days_back']
 MAX_PER_QUERY = _digest['max_per_query']
 BATCH_SIZE = _digest['batch_size']
+GEMINI_MODEL = _digest['gemini_model']
+GEMINI_BASE_URL = _digest['gemini_base_url']
 GEMINI_CALL_WARN_THRESHOLD = _digest['gemini_call_warn_threshold']
 PDF_MAX_SIZE_MB = _digest['pdf_max_size_mb']
 

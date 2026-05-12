@@ -4,9 +4,9 @@ import time
 
 import requests
 
-from config import BATCH_SIZE, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT
+from config import BATCH_SIZE, GEMINI_BASE_URL, GEMINI_MODEL, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT
 
-GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'
+GEMINI_URL = f'{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent'
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
