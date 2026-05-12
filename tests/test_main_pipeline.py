@@ -209,15 +209,28 @@ def test_live_run_exits_zero_when_no_results_but_no_errors(mock_db, mock_io):
 	assert args[4] == 0
 
 
-def test_live_run_exits_when_semantic_scholar_api_key_missing(monkeypatch, mock_db, mock_io):
-	monkeypatch.delenv('SEMANTIC_SCHOLAR_API_KEY', raising=False)
+@pytest.mark.parametrize('var', main.REQUIRED_ENV_VARS)
+def test_live_run_exits_when_required_env_var_missing(monkeypatch, mock_db, mock_io, var):
+	monkeypatch.delenv(var, raising=False)
 
 	with pytest.raises(SystemExit) as exc:
 		main.main([])
 
-	assert 'SEMANTIC_SCHOLAR_API_KEY' in str(exc.value)
+	assert var in str(exc.value)
 	mock_db['connect'].assert_not_called()
 	mock_io['fetch'].assert_not_called()
+
+
+def test_live_run_exit_message_lists_every_missing_required_env_var(monkeypatch, mock_db, mock_io):
+	# Listed together so operators fix all missing keys in one go, not one CI run at a time.
+	for var in main.REQUIRED_ENV_VARS:
+		monkeypatch.delenv(var, raising=False)
+
+	with pytest.raises(SystemExit) as exc:
+		main.main([])
+
+	for var in main.REQUIRED_ENV_VARS:
+		assert var in str(exc.value)
 
 
 def test_live_run_passes_api_key_to_fetch_papers(mock_db, mock_io):
