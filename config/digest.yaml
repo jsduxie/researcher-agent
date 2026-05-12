@@ -40,5 +40,7 @@ relevance_threshold: 6
 days_back: 14
 max_per_query: 8
 batch_size: 10
-gemini_call_warn_threshold: 100
+gemini_model: gemini-2.5-flash
+gemini_base_url: https://generativelanguage.googleapis.com/v1beta
+gemini_call_warn_threshold: 400
 pdf_max_size_mb: 50

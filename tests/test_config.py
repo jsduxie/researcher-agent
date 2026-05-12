@@ -34,6 +34,26 @@ def test_gemini_call_warn_threshold_is_positive_int():
 	assert config.GEMINI_CALL_WARN_THRESHOLD > 0
 
 
+# -- GEMINI_MODEL --
+
+
+def test_gemini_model_is_non_empty_string():
+	assert isinstance(config.GEMINI_MODEL, str)
+	assert config.GEMINI_MODEL.strip()
+
+
+# -- GEMINI_BASE_URL --
+
+
+def test_gemini_base_url_is_non_empty_string():
+	assert isinstance(config.GEMINI_BASE_URL, str)
+	assert config.GEMINI_BASE_URL.strip()
+
+
+def test_gemini_base_url_is_absolute_https():
+	assert config.GEMINI_BASE_URL.startswith('https://')
+
+
 # -- PDF_MAX_SIZE_MB --
 
 
