@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import db
@@ -71,15 +72,15 @@ def _record_gemini_call():
 	GEMINI_CALL_COUNT += 1
 
 
-def _summarise_kept_papers(enriched, conn):
-	# Summariser handles its own cache check against the summaries table, so a paper
-	# we already summarised on a prior run short-circuits here. PDF path is skipped
-	# in dry-run because api_key resolves to None.
+def _summarise_kept_papers(enriched, database_url):
+	# Per-paper session: closes between Gemini calls so Neon can auto-suspend.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
 	for paper in enriched:
-		fields = summariser.summarise_paper(
-			paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
-		)
+		session = db.session(database_url) if database_url is not None else nullcontext(None)
+		with session as conn:
+			fields = summariser.summarise_paper(
+				paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
+			)
 		if fields:
 			paper.update(fields)
 
@@ -105,16 +106,15 @@ def main(argv=None):
 	DRY_RUN = parser.parse_args(argv).dry_run
 	GEMINI_CALL_COUNT = 0
 
-	conn = None
 	run_id = None
 	api_key = None
+	database_url = None
 	if not DRY_RUN:
 		missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
 		if missing:
 			sys.exit(f'{", ".join(missing)} required; set in the environment or GitHub Actions secrets.')
 		api_key = os.environ['SEMANTIC_SCHOLAR_API_KEY']
-		conn = db.connect(os.environ['DATABASE_URL'])
-		db.init_schema(conn)
+		database_url = os.environ['DATABASE_URL']
 
 	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
@@ -126,26 +126,32 @@ def main(argv=None):
 		print(f'Dropped {len(missing_id)} paper(s) without paperId (cannot persist)')
 	unique = [p for p in unique if p.get('paperId')]
 
-	if conn is not None:
-		run_id = db.start_run(conn, len(unique))
-		# Always upsert so existing rows refresh metadata (citation counts).
-		for p in unique:
-			db.upsert_paper(conn, p)
-		unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
-		new_papers = [p for p in unique if p['paperId'] in unscored]
+	# Phase A: schema, run row, paper upserts, needs_scoring filter. One scoped session.
+	if database_url is not None:
+		with db.session(database_url) as conn:
+			db.init_schema(conn)
+			run_id = db.start_run(conn, len(unique))
+			for p in unique:
+				db.upsert_paper(conn, p)
+			unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
+			new_papers = [p for p in unique if p['paperId'] in unscored]
 	else:
 		new_papers = unique
 
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
+	# Phase B: scoring. No DB connection held during the Gemini work.
 	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
 
-	if conn is not None and new_papers:
-		db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
+	# Phase C: record what was attempted/responded.
+	if database_url is not None and new_papers:
+		with db.session(database_url) as conn:
+			db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
 
-	_summarise_kept_papers(enriched, conn)
+	# Phase D: per-paper summarisation, each in its own session.
+	_summarise_kept_papers(enriched, database_url)
 	_report_gemini_usage()
 
 	if not enriched:
@@ -153,9 +159,10 @@ def main(argv=None):
 	else:
 		_send(build_email(enriched), len(enriched))
 
-	# finish_run last so a logging failure never silently skips the email.
-	if conn is not None:
-		db.finish_run(conn, run_id, len(enriched), queries_attempted, queries_errored)
+	# Phase E: finish_run last so a logging failure never silently skips the email.
+	if database_url is not None:
+		with db.session(database_url) as conn:
+			db.finish_run(conn, run_id, len(enriched), queries_attempted, queries_errored)
 
 	if queries_attempted > 0 and queries_attempted == queries_errored:
 		sys.exit(f'All {queries_attempted} queries errored; no papers retrieved this run.')
