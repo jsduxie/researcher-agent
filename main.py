@@ -16,6 +16,16 @@ _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
 DRY_RUN = False
 GEMINI_CALL_COUNT = 0
 
+# Contract enforced by tests/test_workflow_env.py against the send-digest step.
+REQUIRED_ENV_VARS = (
+	'SEMANTIC_SCHOLAR_API_KEY',
+	'DATABASE_URL',
+	'GEMINI_API_KEY',
+	'GMAIL_USER',
+	'GMAIL_APP_PASSWORD',
+	'EMAIL_TO',
+)
+
 
 def _fetch(query, api_key):
 	if DRY_RUN:
@@ -99,9 +109,10 @@ def main(argv=None):
 	run_id = None
 	api_key = None
 	if not DRY_RUN:
-		api_key = os.environ.get('SEMANTIC_SCHOLAR_API_KEY')
-		if not api_key:
-			sys.exit('SEMANTIC_SCHOLAR_API_KEY is required; set it in the environment or GitHub Actions secrets.')
+		missing = [v for v in REQUIRED_ENV_VARS if not os.environ.get(v)]
+		if missing:
+			sys.exit(f'{", ".join(missing)} required; set in the environment or GitHub Actions secrets.')
+		api_key = os.environ['SEMANTIC_SCHOLAR_API_KEY']
 		conn = db.connect(os.environ['DATABASE_URL'])
 		db.init_schema(conn)
 
