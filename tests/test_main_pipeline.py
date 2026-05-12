@@ -16,11 +16,16 @@ def env(monkeypatch):
 
 @pytest.fixture
 def mock_db(mocker):
+	# `db.session` is the scoped context manager used by every DB boundary in main.
+	# Default behaviour: each session yields the same mock conn.
 	conn = mocker.MagicMock()
+	session_cm = mocker.MagicMock()
+	session_cm.__enter__.return_value = conn
+	session_cm.__exit__.return_value = False
 	# By default, needs_scoring claims every paper passed in needs scoring.
 	return {
 		'conn': conn,
-		'connect': mocker.patch('main.db.connect', return_value=conn),
+		'session': mocker.patch('main.db.session', return_value=session_cm),
 		'init_schema': mocker.patch('main.db.init_schema'),
 		'start_run': mocker.patch('main.db.start_run', return_value=42),
 		'upsert_paper': mocker.patch('main.db.upsert_paper'),
@@ -47,7 +52,9 @@ def mock_io(mocker):
 
 def test_live_run_opens_db_initialises_schema_and_brackets_with_run_lifecycle(mock_db, mock_io):
 	main.main([])
-	mock_db['connect'].assert_called_once_with('postgresql://fake')
+	# Every session call carries the DATABASE_URL value; multiple opens happen across boundaries.
+	for call in mock_db['session'].call_args_list:
+		assert call.args == ('postgresql://fake',)
 	mock_db['init_schema'].assert_called_once_with(mock_db['conn'])
 	mock_db['start_run'].assert_called_once_with(mock_db['conn'], 1)
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1, len(SEARCH_QUERIES), 0)
@@ -121,14 +128,14 @@ def test_live_run_sends_email_before_finishing_the_run(mock_db, mock_io):
 # -- failure modes --
 
 
-def test_live_run_propagates_db_connect_failure(mocker, mock_io):
+def test_live_run_propagates_db_session_failure(mock_db, mock_io):
 	import psycopg
 
-	mocker.patch('main.db.connect', side_effect=psycopg.OperationalError('connection refused'))
+	mock_db['session'].side_effect = psycopg.OperationalError('connection refused')
 	with pytest.raises(psycopg.OperationalError, match='connection refused'):
 		main.main([])
-	# Nothing downstream of the connect should run.
-	mock_io['fetch'].assert_not_called()
+	# Phase A opens the first session after fetch; fetch ran, but scoring and email did not.
+	mock_io['fetch'].assert_called()
 	mock_io['score'].assert_not_called()
 	mock_io['send'].assert_not_called()
 
@@ -217,7 +224,7 @@ def test_live_run_exits_when_required_env_var_missing(monkeypatch, mock_db, mock
 		main.main([])
 
 	assert var in str(exc.value)
-	mock_db['connect'].assert_not_called()
+	mock_db['session'].assert_not_called()
 	mock_io['fetch'].assert_not_called()
 
 
@@ -431,3 +438,97 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 	# didn't go through _gemini_score; summariser was mocked so no on_gemini_call
 	# fired). Net result: count is back to 0 plus whatever the mocks triggered.
 	assert main.GEMINI_CALL_COUNT < 999
+
+
+# -- db session lifecycle --
+
+
+def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
+	# Default mock_io: 1 fetched, 1 needs scoring, 1 kept.
+	# Boundary count: 1 (Phase A) + 1 (C: mark_scoring_results) + 1 (D: 1 kept paper) + 1 (E: finish_run) = 4.
+	main.main([])
+	assert mock_db['session'].call_count == 4
+
+
+def test_main_opens_per_paper_sessions_in_summarisation_phase(mock_db, mock_io, mocker):
+	# 3 kept papers => Phase D contributes 3 sessions.
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	mock_io['score'].return_value = (
+		[{'paperId': 'p1', 'ai_score': 8}, {'paperId': 'p2', 'ai_score': 9}, {'paperId': 'p3', 'ai_score': 7}],
+		{'p1', 'p2', 'p3'},
+	)
+	main.main([])
+	# 1 (A) + 1 (C) + 3 (D) + 1 (E) = 6.
+	assert mock_db['session'].call_count == 6
+
+
+def test_main_skips_phase_c_and_d_sessions_when_nothing_needs_scoring(mock_db, mock_io):
+	# needs_scoring returns empty => new_papers=[] => Phase C skipped; scorer also
+	# receives [] so nothing is kept and Phase D is skipped too.
+	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
+	mock_io['score'].return_value = ([], set())
+	main.main([])
+	# 1 (A) + 0 (C) + 0 (D) + 1 (E) = 2.
+	assert mock_db['session'].call_count == 2
+
+
+def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
+	# Replace the default session mock with a tracker that counts active opens; snapshot
+	# the active count at the moment scorer.score_and_summarise is invoked.
+	from contextlib import contextmanager
+
+	active = [0]
+	active_during_scoring = []
+
+	@contextmanager
+	def tracking_session(url):
+		active[0] += 1
+		try:
+			yield mock_db['conn']
+		finally:
+			active[0] -= 1
+
+	mock_db['session'].side_effect = tracking_session
+
+	score_return = mock_io['score'].return_value
+
+	def snap(*args, **kwargs):
+		active_during_scoring.append(active[0])
+		return score_return
+
+	mock_io['score'].side_effect = snap
+
+	main.main([])
+
+	# Phase B must hold no DB session, otherwise we burn Neon compute during Gemini retries.
+	assert active_during_scoring == [0]
+
+
+def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
+	# Phase A succeeds; the next session open (Phase C) fails. Verifies the pipeline
+	# completes the phases it can and surfaces the failure cleanly.
+	from contextlib import contextmanager
+
+	import psycopg
+
+	call_count = [0]
+
+	@contextmanager
+	def maybe_failing(url):
+		call_count[0] += 1
+		if call_count[0] == 1:
+			yield mock_db['conn']
+		else:
+			raise psycopg.OperationalError('reaped')
+
+	mock_db['session'].side_effect = maybe_failing
+
+	with pytest.raises(psycopg.OperationalError, match='reaped'):
+		main.main([])
+
+	mock_db['upsert_paper'].assert_called()
+	mock_io['score'].assert_called_once()
+	mock_db['mark_scoring_results'].assert_not_called()
+	mock_io['summarise'].assert_not_called()
+	mock_db['finish_run'].assert_not_called()
+	mock_io['send'].assert_not_called()

@@ -41,6 +41,10 @@ jobs:
 
       - name: Integration tests
         if: always() && (env.DATABASE_URL_TEST != '' || env.GEMINI_API_KEY != '')
+        env:
+          # PR pushes opt into the long-idle test; push-to-main and the scheduled
+          # cron skip it so the post-merge / daily CI stays fast.
+          RUN_LONG_INTEGRATION: ${{ github.event_name == 'pull_request' && '1' || '0' }}
         run: pytest -m integration --cov-append --cov-branch --cov-report=term
 
       - name: Coverage reports
@@ -82,6 +86,8 @@ jobs:
 
       - name: Run research agent
         env:
+          # Flush stdout/stderr per write so cron output surfaces in real time.
+          PYTHONUNBUFFERED: '1'
           SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
