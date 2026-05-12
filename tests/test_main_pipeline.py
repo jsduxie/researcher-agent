@@ -295,27 +295,25 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 
 
 def test_gemini_score_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
-	# Orchestration tests mock scorer.score_and_summarise wholesale, so the live-mode
-	# branch of main._gemini_score (the callable passed to the scorer) is never
-	# exercised end-to-end. Cover it directly.
+	# Orchestration tests mock scorer.score_and_summarise wholesale; cover the live-mode
+	# branch of _gemini_score directly.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='gemini json')
 
 	result = main._gemini_score('prompt text')
 
-	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3)
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3, on_attempt=main._record_gemini_call)
 	assert result == 'gemini json'
 
 
 def test_gemini_summarise_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
-	# Same as above for the summariser-facing wrapper, which routes prompt-only
-	# summariser calls through the same generateContent endpoint.
+	# Same as above for the summariser-facing wrapper.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='summary json')
 
 	result = main._gemini_summarise('prompt text')
 
-	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3)
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3, on_attempt=main._record_gemini_call)
 	assert result == 'summary json'
 
 
@@ -327,15 +325,29 @@ def test_gemini_score_wrapper_increments_call_count(monkeypatch):
 	assert main.GEMINI_CALL_COUNT == 2
 
 
-def test_gemini_score_wrapper_does_not_increment_when_scorer_raises(monkeypatch, mocker):
-	# Transport errors must not be counted. If they were, a flapping endpoint could
-	# trip the call-count warning even though no quota was consumed.
+def test_gemini_score_wrapper_does_not_increment_when_scorer_is_mocked(monkeypatch, mocker):
+	# When scorer.gemini is mocked, the new on_attempt callback never fires from inside
+	# the (replaced) retry loop; per-attempt firing under the real scorer.gemini is in test_scorer.py.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mocker.patch('main.scorer.gemini', side_effect=Exception('boom'))
 	main.GEMINI_CALL_COUNT = 0
 	with pytest.raises(Exception, match='boom'):
 		main._gemini_score('prompt')
 	assert main.GEMINI_CALL_COUNT == 0
+
+
+def test_gemini_score_wrapper_passes_record_callback_as_on_attempt(monkeypatch, mocker):
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mock_gemini = mocker.patch('main.scorer.gemini', return_value='ok')
+	main._gemini_score('prompt')
+	assert mock_gemini.call_args.kwargs.get('on_attempt') is main._record_gemini_call
+
+
+def test_gemini_summarise_wrapper_passes_record_callback_as_on_attempt(monkeypatch, mocker):
+	monkeypatch.setattr(main, 'DRY_RUN', False)
+	mock_gemini = mocker.patch('main.scorer.gemini', return_value='ok')
+	main._gemini_summarise('prompt')
+	assert mock_gemini.call_args.kwargs.get('on_attempt') is main._record_gemini_call
 
 
 def test_record_gemini_call_increments_count(monkeypatch):

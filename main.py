@@ -50,21 +50,19 @@ def _collect_papers(api_key):
 
 
 def _gemini_score(prompt, retries=3):
-	global GEMINI_CALL_COUNT
+	# Counter fires per attempt inside scorer.gemini's retry loop so a 429 storm
+	# trips the budget within a small multiple of the cap rather than running silent.
 	if DRY_RUN:
-		result = (_FIXTURES / 'gemini_score.json').read_text()
-	else:
-		result = scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
-	# Mirror the summariser's on_gemini_call semantics: increment only after a
-	# response body returned, so transport errors do not inflate the counter.
-	GEMINI_CALL_COUNT += 1
-	return result
+		_record_gemini_call()
+		return (_FIXTURES / 'gemini_score.json').read_text()
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries, on_attempt=_record_gemini_call)
 
 
 def _gemini_summarise(prompt, retries=3):
 	if DRY_RUN:
+		_record_gemini_call()
 		return (_FIXTURES / 'gemini_summary.json').read_text()
-	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries)
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries, on_attempt=_record_gemini_call)
 
 
 def _record_gemini_call():
