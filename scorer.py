@@ -12,6 +12,20 @@ _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 
 
+class GeminiQuotaExhausted(Exception):
+	pass
+
+
+def _is_quota_exhausted(response):
+	# Google's RESOURCE_EXHAUSTED status is the canonical RPD/RPM exhaustion signal.
+	try:
+		if (response.json().get('error') or {}).get('status') == 'RESOURCE_EXHAUSTED':
+			return True
+	except (ValueError, AttributeError):
+		pass
+	return 'RESOURCE_EXHAUSTED' in (response.text or '')
+
+
 def gemini(prompt, api_key, retries=3):
 	# Auth via header rather than ?key= query param keeps the secret out of any
 	# URL that may surface in HTTPError messages and downstream logs.
@@ -22,6 +36,8 @@ def gemini(prompt, api_key, retries=3):
 		time.sleep(5)
 		r = requests.post(GEMINI_URL, headers=headers, json=body, timeout=120)
 		if r.status_code == 429:
+			if _is_quota_exhausted(r):
+				raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
 			wait = 15 * (attempt + 1)
 			print(f'Gemini rate limited, waiting {wait}s')
 			time.sleep(wait)
@@ -101,7 +117,11 @@ def score_and_summarise(papers, gemini_fn):
 	for chunk_start in range(0, len(papers), BATCH_SIZE):
 		chunk = papers[chunk_start : chunk_start + BATCH_SIZE]
 		print(f'Scoring batch {chunk_start // BATCH_SIZE + 1} ({len(chunk)} papers)...')
-		chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn)
+		try:
+			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn)
+		except GeminiQuotaExhausted as e:
+			print(f'Quota exhausted, halting remaining batches: {e}')
+			break
 		enriched.extend(chunk_enriched)
 		responded.update(chunk_responded)
 
@@ -124,6 +144,8 @@ def _score_chunk(papers, gemini_fn):
 	try:
 		response = gemini_fn(prompt)
 		results = parse_gemini_scores(response)
+	except GeminiQuotaExhausted:
+		raise
 	except Exception as e:
 		print(f'Batch Gemini error: {e}')
 		return [], set()

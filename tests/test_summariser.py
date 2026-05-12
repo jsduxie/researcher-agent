@@ -793,3 +793,65 @@ def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
 	assert result == cached
 	get_request.assert_not_called()
 	gemini_fn.assert_not_called()
+
+
+# -- quota exhaustion (RESOURCE_EXHAUSTED) --
+
+
+@responses.activate
+def test_generate_with_file_raises_quota_exhausted_on_resource_exhausted_429():
+	import scorer
+
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	with pytest.raises(scorer.GeminiQuotaExhausted):
+		generate_with_file('p', 'files/abc', 'k')
+
+
+@responses.activate
+def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
+	import scorer
+
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	with pytest.raises(scorer.GeminiQuotaExhausted):
+		generate_with_file('p', 'files/abc', 'k')
+	# No backoff sleeps; quota detection bypasses the retry loop entirely.
+	_no_sleep.assert_not_called()
+
+
+@responses.activate
+def test_upload_pdf_raises_quota_exhausted_on_resource_exhausted_429():
+	import scorer
+
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	with pytest.raises(scorer.GeminiQuotaExhausted):
+		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+
+
+def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
+	import scorer
+
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	gemini_fn = mocker.Mock(side_effect=scorer.GeminiQuotaExhausted('quota'))
+	with pytest.raises(scorer.GeminiQuotaExhausted, match='quota'):
+		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+
+
+@responses.activate
+def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
+	import scorer
+
+	responses.get(PDF_URL, body=b'pdf')
+	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
+	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	# PDF path raises quota exhausted; abstract fallback must not run.
+	with pytest.raises(scorer.GeminiQuotaExhausted):
+		summarise_paper(
+			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+			gemini_fn,
+			conn=mocker.MagicMock(),
+			api_key='fake-key',
+		)
+	gemini_fn.assert_not_called()
