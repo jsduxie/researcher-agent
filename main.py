@@ -77,10 +77,14 @@ def _summarise_kept_papers(enriched, database_url):
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
 	for paper in enriched:
 		session = db.session(database_url) if database_url is not None else nullcontext(None)
-		with session as conn:
-			fields = summariser.summarise_paper(
-				paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
-			)
+		try:
+			with session as conn:
+				fields = summariser.summarise_paper(
+					paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
+				)
+		except scorer.GeminiQuotaExhausted as e:
+			print(f'Quota exhausted, halting summarisation: {e}')
+			break
 		if fields:
 			paper.update(fields)
 

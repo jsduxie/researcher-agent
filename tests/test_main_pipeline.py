@@ -532,3 +532,28 @@ def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
 	mock_io['summarise'].assert_not_called()
 	mock_db['finish_run'].assert_not_called()
 	mock_io['send'].assert_not_called()
+
+
+# -- quota exhaustion (RESOURCE_EXHAUSTED) --
+
+
+def test_summarise_kept_papers_halts_on_quota_exhausted_and_preserves_earlier_fields(mock_db, mock_io, mocker):
+	# 3 kept papers; summarise_paper raises GeminiQuotaExhausted on the 2nd.
+	import scorer as scorer_module
+
+	# Scores descending so the sort in main() preserves p1/p2/p3 order.
+	p1 = {'paperId': 'p1', 'ai_score': 9}
+	p2 = {'paperId': 'p2', 'ai_score': 8}
+	p3 = {'paperId': 'p3', 'ai_score': 7}
+	mock_io['score'].return_value = ([p1, p2, p3], {'p1', 'p2', 'p3'})
+
+	summary = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
+	mock_io['summarise'].side_effect = [summary, scorer_module.GeminiQuotaExhausted('quota'), summary]
+
+	main.main([])
+
+	# p1 succeeded, p2 raised, p3 not attempted.
+	assert mock_io['summarise'].call_count == 2
+	assert p1.get('methodology') == 'm'
+	assert 'methodology' not in p2
+	assert 'methodology' not in p3

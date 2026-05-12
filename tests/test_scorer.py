@@ -5,7 +5,7 @@ import requests
 import responses
 
 import scorer
-from scorer import _score_chunk, apply_scores, gemini, parse_gemini_scores, score_and_summarise
+from scorer import GeminiQuotaExhausted, _score_chunk, apply_scores, gemini, parse_gemini_scores, score_and_summarise
 
 
 @pytest.fixture(autouse=True)
@@ -415,3 +415,63 @@ def test_gemini_raises_when_text_field_missing():
 	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
 	with pytest.raises(ValueError, match='missing expected fields'):
 		gemini('prompt', 'fake-key')
+
+
+# -- quota exhaustion (RESOURCE_EXHAUSTED) --
+
+
+@responses.activate
+def test_gemini_raises_quota_exhausted_on_resource_exhausted_429():
+	responses.post(
+		scorer.GEMINI_URL,
+		json={'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED', 'message': 'Quota exceeded'}},
+		status=429,
+	)
+	with pytest.raises(GeminiQuotaExhausted):
+		gemini('prompt', 'fake-key')
+
+
+def test_gemini_skips_backoff_sleep_on_quota_exhausted(no_sleep):
+	with responses.RequestsMock() as rmock:
+		rmock.post(scorer.GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+		with pytest.raises(GeminiQuotaExhausted):
+			gemini('prompt', 'fake-key')
+	# Only the pre-attempt sleep(5); no backoff sleep ran (retry layer did not engage).
+	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
+	assert sleep_calls == [5]
+
+
+@responses.activate
+def test_gemini_detects_quota_exhausted_via_substring_when_body_not_json():
+	# Falls back to substring match when the body is not parseable JSON.
+	responses.post(scorer.GEMINI_URL, body='Error: RESOURCE_EXHAUSTED (daily limit)', status=429)
+	with pytest.raises(GeminiQuotaExhausted):
+		gemini('prompt', 'fake-key')
+
+
+def test_score_chunk_propagates_quota_exhausted_without_swallowing(mocker):
+	# _score_chunk wraps gemini_fn in a try/except; it must re-raise quota exhaustion
+	# rather than treat it as a regular per-batch error and return empty.
+	gemini_fn = mocker.Mock(side_effect=GeminiQuotaExhausted('quota'))
+	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
+	with pytest.raises(GeminiQuotaExhausted, match='quota'):
+		_score_chunk(papers, gemini_fn)
+
+
+def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
+	# Batch 2 of 3 raises quota exhausted; batch 3 must not be attempted, batch 1 results retained.
+	mock_chunk = mocker.patch(
+		'scorer._score_chunk',
+		side_effect=[
+			([{'paperId': 'p1', 'ai_score': 8}], {'p1'}),
+			GeminiQuotaExhausted('quota'),
+			([{'paperId': 'p3', 'ai_score': 7}], {'p3'}),
+		],
+	)
+	gemini_fn = mocker.Mock()
+	papers = [{'paperId': f'p{i}'} for i in range(scorer.BATCH_SIZE * 3)]
+	enriched, responded = score_and_summarise(papers, gemini_fn)
+	assert mock_chunk.call_count == 2
+	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
+	assert responded == {'p1'}
+	assert 'Quota exhausted' in capsys.readouterr().out

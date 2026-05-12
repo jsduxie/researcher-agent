@@ -13,6 +13,7 @@ from config import (
 	RESEARCH_CONTEXT,
 	SUMMARISER_PROMPT,
 )
+from scorer import GeminiQuotaExhausted, _is_quota_exhausted
 
 MODEL_VERSION = GEMINI_MODEL
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
@@ -71,6 +72,8 @@ def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 		if on_gemini_call:
 			on_gemini_call()
 		return parse_summary_response(response)
+	except GeminiQuotaExhausted:
+		raise
 	except Exception as e:
 		print(f'PDF summariser failed for "{title}": {e}; falling back to abstract')
 		return None
@@ -89,6 +92,8 @@ def _summarise_via_abstract(paper, gemini_fn, on_gemini_call):
 		if on_gemini_call:
 			on_gemini_call()
 		return parse_summary_response(response)
+	except GeminiQuotaExhausted:
+		raise
 	except Exception as e:
 		print(f'Summariser Gemini error for "{title}": {e}')
 		return None
@@ -113,6 +118,8 @@ def _post_with_retry(url, **kwargs):
 	last = None
 	for attempt in range(len(GEMINI_BACKOFF_DELAYS) + 1):
 		last = requests.post(url, **kwargs)
+		if last.status_code == 429 and _is_quota_exhausted(last):
+			raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
 		if last.status_code not in GEMINI_RETRY_STATUS_CODES:
 			return last
 		if attempt == len(GEMINI_BACKOFF_DELAYS):
