@@ -54,6 +54,18 @@ def test_gemini_base_url_is_absolute_https():
 	assert config.GEMINI_BASE_URL.startswith('https://')
 
 
+# -- GEMINI_UPLOAD_BASE_URL --
+
+
+def test_gemini_upload_base_url_is_non_empty_string():
+	assert isinstance(config.GEMINI_UPLOAD_BASE_URL, str)
+	assert config.GEMINI_UPLOAD_BASE_URL.strip()
+
+
+def test_gemini_upload_base_url_is_absolute_https():
+	assert config.GEMINI_UPLOAD_BASE_URL.startswith('https://')
+
+
 # -- PDF_MAX_SIZE_MB --
 
 

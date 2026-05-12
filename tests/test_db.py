@@ -322,7 +322,7 @@ def test_mark_scoring_results_propagates_database_error(mock_conn):
 
 
 def test_get_summary_returns_dict_when_row_present(mock_conn):
-	_cursor(mock_conn).fetchone.return_value = ('m', 'f', 'r', 'l', 'gemini-2.5-flash')
+	_cursor(mock_conn).fetchone.return_value = ('m', 'f', 'r', 'l', 'test-model-v1')
 	result = db.get_summary(mock_conn, 'abc')
 	call = _cursor(mock_conn).execute.call_args
 	assert 'SELECT methodology, findings, relevance, limitations, model_version FROM summaries' in call.args[0]
@@ -333,7 +333,7 @@ def test_get_summary_returns_dict_when_row_present(mock_conn):
 		'findings': 'f',
 		'relevance': 'r',
 		'limitations': 'l',
-		'model_version': 'gemini-2.5-flash',
+		'model_version': 'test-model-v1',
 	}
 
 
@@ -353,7 +353,7 @@ def test_get_summary_propagates_database_error(mock_conn):
 
 def test_upsert_summary_uses_insert_on_conflict(mock_conn):
 	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
-	db.upsert_summary(mock_conn, 'abc', fields, 'gemini-2.5-flash')
+	db.upsert_summary(mock_conn, 'abc', fields, 'test-model-v1')
 	sql = _cursor(mock_conn).execute.call_args.args[0]
 	assert 'INSERT INTO summaries' in sql
 	assert 'ON CONFLICT (paper_id) DO UPDATE' in sql
@@ -362,7 +362,7 @@ def test_upsert_summary_uses_insert_on_conflict(mock_conn):
 def test_upsert_summary_preserves_created_at_on_conflict(mock_conn):
 	# The ON CONFLICT clause must only touch updated_at; otherwise the column
 	# literally named created_at stops representing creation time.
-	db.upsert_summary(mock_conn, 'abc', {}, 'gemini-2.5-flash')
+	db.upsert_summary(mock_conn, 'abc', {}, 'test-model-v1')
 	sql = _cursor(mock_conn).execute.call_args.args[0]
 	do_update_clause = sql.split('DO UPDATE')[1]
 	assert 'updated_at = NOW()' in do_update_clause
@@ -371,18 +371,18 @@ def test_upsert_summary_preserves_created_at_on_conflict(mock_conn):
 
 def test_upsert_summary_binds_all_fields_in_order(mock_conn):
 	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
-	db.upsert_summary(mock_conn, 'abc', fields, 'gemini-2.5-flash')
+	db.upsert_summary(mock_conn, 'abc', fields, 'test-model-v1')
 	params = _cursor(mock_conn).execute.call_args.args[1]
-	assert params == ('abc', 'm', 'f', 'r', 'l', 'gemini-2.5-flash')
+	assert params == ('abc', 'm', 'f', 'r', 'l', 'test-model-v1')
 
 
 def test_upsert_summary_binds_none_for_missing_field_keys(mock_conn):
 	# A field absent from the dict should bind NULL rather than raise. Callers using a
 	# placeholder string ("Not available from this source.") will provide the key; this
 	# guards against a partial Gemini response with keys missing entirely.
-	db.upsert_summary(mock_conn, 'abc', {'methodology': 'm'}, 'gemini-2.5-flash')
+	db.upsert_summary(mock_conn, 'abc', {'methodology': 'm'}, 'test-model-v1')
 	params = _cursor(mock_conn).execute.call_args.args[1]
-	assert params == ('abc', 'm', None, None, None, 'gemini-2.5-flash')
+	assert params == ('abc', 'm', None, None, None, 'test-model-v1')
 
 
 def test_upsert_summary_accepts_none_model_version(mock_conn):
@@ -394,4 +394,4 @@ def test_upsert_summary_accepts_none_model_version(mock_conn):
 def test_upsert_summary_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
 	with pytest.raises(RuntimeError, match='write boom'):
-		db.upsert_summary(mock_conn, 'abc', {}, 'gemini-2.5-flash')
+		db.upsert_summary(mock_conn, 'abc', {}, 'test-model-v1')
