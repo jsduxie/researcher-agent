@@ -62,6 +62,13 @@ def test_session_propagates_connect_failure(mocker):
 		pass
 
 
+def test_session_stashes_database_url_on_conn_for_reconnect(mocker):
+	# @database_reconnect reads conn._database_url to open a fresh session on OperationalError.
+	mocker.patch('db.psycopg.connect')
+	with db.session('postgresql://x') as conn:
+		assert conn._database_url == 'postgresql://x'
+
+
 # -- init_schema --
 
 
@@ -427,3 +434,146 @@ def test_upsert_summary_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
 	with pytest.raises(RuntimeError, match='write boom'):
 		db.upsert_summary(mock_conn, 'abc', {}, 'test-model-v1')
+
+
+# -- database_reconnect (decorator in isolation) --
+
+
+def test_database_reconnect_retries_once_on_operational_error_then_succeeds(mocker):
+	import psycopg
+
+	calls = []
+
+	@db.database_reconnect
+	def op(conn, x):
+		calls.append(conn)
+		if len(calls) == 1:
+			raise psycopg.OperationalError('reaped')
+		return x * 2
+
+	original_conn = mocker.MagicMock()
+	original_conn._database_url = 'postgresql://x'
+	fresh_conn = mocker.MagicMock()
+	mock_connect = mocker.patch('db.psycopg.connect', return_value=fresh_conn)
+
+	result = op(original_conn, 5)
+
+	assert result == 10
+	assert calls == [original_conn, fresh_conn]
+	mock_connect.assert_called_once_with('postgresql://x', autocommit=True, prepare_threshold=None)
+
+
+def test_database_reconnect_propagates_when_second_attempt_also_fails(mocker):
+	import psycopg
+
+	@db.database_reconnect
+	def op(conn):
+		raise psycopg.OperationalError('always')
+
+	original_conn = mocker.MagicMock()
+	original_conn._database_url = 'postgresql://x'
+	mocker.patch('db.psycopg.connect', return_value=mocker.MagicMock())
+
+	with pytest.raises(psycopg.OperationalError, match='always'):
+		op(original_conn)
+
+
+def test_database_reconnect_does_not_retry_on_non_operational_error(mocker):
+	import psycopg
+
+	calls = []
+
+	@db.database_reconnect
+	def op(conn):
+		calls.append(conn)
+		raise psycopg.DataError('bad data')
+
+	original_conn = mocker.MagicMock()
+	original_conn._database_url = 'postgresql://x'
+	mock_connect = mocker.patch('db.psycopg.connect')
+
+	with pytest.raises(psycopg.DataError, match='bad data'):
+		op(original_conn)
+
+	assert len(calls) == 1
+	mock_connect.assert_not_called()
+
+
+def test_database_reconnect_propagates_when_conn_has_no_database_url(mocker):
+	import psycopg
+
+	@db.database_reconnect
+	def op(conn):
+		raise psycopg.OperationalError('reaped')
+
+	# A conn with no _database_url attribute (e.g., a code path that bypassed db.session).
+	class BareConn:
+		pass
+
+	conn = BareConn()
+	mock_connect = mocker.patch('db.psycopg.connect')
+
+	with pytest.raises(psycopg.OperationalError, match='reaped'):
+		op(conn)
+
+	mock_connect.assert_not_called()
+
+
+# -- reconnect on real wrapped helpers --
+
+
+def _setup_reconnect(mock_conn, mocker):
+	# Common setup: original conn's cursor raises OperationalError on every execute;
+	# a fresh conn is returned by db.psycopg.connect for the reconnect.
+	import psycopg
+
+	mock_conn._database_url = 'postgresql://x'
+	_cursor(mock_conn).execute.side_effect = psycopg.OperationalError('reaped')
+	fresh_conn = mocker.MagicMock()
+	mock_connect = mocker.patch('db.psycopg.connect', return_value=fresh_conn)
+	return fresh_conn, mock_connect
+
+
+def test_init_schema_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.init_schema(mock_conn)
+	_cursor(fresh_conn).execute.assert_called_once()
+	mock_connect.assert_called_once_with('postgresql://x', autocommit=True, prepare_threshold=None)
+
+
+def test_upsert_paper_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	_cursor(fresh_conn).fetchone.return_value = (True,)
+	result = db.upsert_paper(mock_conn, {'paperId': 'abc'})
+	assert result is True
+	mock_connect.assert_called_once()
+
+
+def test_start_run_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	_cursor(fresh_conn).fetchone.return_value = (42,)
+	result = db.start_run(mock_conn, 10)
+	assert result == 42
+	mock_connect.assert_called_once()
+
+
+def test_finish_run_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.finish_run(mock_conn, run_id=1, papers_kept=0, queries_attempted=0, queries_errored=0)
+	_cursor(fresh_conn).execute.assert_called_once()
+	mock_connect.assert_called_once()
+
+
+def test_upsert_summary_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.upsert_summary(mock_conn, 'abc', {}, 'test-model-v1')
+	_cursor(fresh_conn).execute.assert_called_once()
+	mock_connect.assert_called_once()
+
+
+def test_mark_scoring_results_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.mark_scoring_results(mock_conn, attempted=['p1'], responded={'p1'})
+	# Two executes on the fresh conn: increment + scored_at update.
+	assert _cursor(fresh_conn).execute.call_count == 2
+	mock_connect.assert_called_once()

@@ -1,3 +1,4 @@
+import functools
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -43,17 +44,38 @@ def connect(database_url):
 @contextmanager
 def session(database_url):
 	conn = connect(database_url)
+	# Stashed so @database_reconnect can reopen a fresh session on OperationalError.
+	conn._database_url = database_url
 	try:
 		yield conn
 	finally:
 		conn.close()
 
 
+def database_reconnect(fn):
+	# Catches a single psycopg.OperationalError on the wrapped helper, opens a fresh
+	# session from conn._database_url, and retries the call exactly once.
+	@functools.wraps(fn)
+	def wrapper(conn, *args, **kwargs):
+		try:
+			return fn(conn, *args, **kwargs)
+		except psycopg.OperationalError:
+			url = getattr(conn, '_database_url', None)
+			if url is None:
+				raise
+			with session(url) as fresh_conn:
+				return fn(fresh_conn, *args, **kwargs)
+
+	return wrapper
+
+
+@database_reconnect
 def init_schema(conn):
 	with conn.cursor() as cur:
 		cur.execute(_SCHEMA_PATH.read_text())
 
 
+@database_reconnect
 def upsert_paper(conn, paper):
 	paper_id = paper['paperId']
 	doi = (paper.get('externalIds') or {}).get('DOI')
@@ -90,12 +112,14 @@ def paper_exists(conn, paper_id):
 		return cur.fetchone() is not None
 
 
+@database_reconnect
 def start_run(conn, papers_fetched):
 	with conn.cursor() as cur:
 		cur.execute('INSERT INTO runs (papers_fetched) VALUES (%s) RETURNING id', (papers_fetched,))
 		return cur.fetchone()[0]
 
 
+@database_reconnect
 def finish_run(conn, run_id, papers_kept, queries_attempted, queries_errored):
 	with conn.cursor() as cur:
 		cur.execute(
@@ -125,6 +149,7 @@ def get_summary(conn, paper_id):
 	return dict(zip(_SUMMARY_COLUMNS, row, strict=True))
 
 
+@database_reconnect
 def upsert_summary(conn, paper_id, fields, model_version):
 	with conn.cursor() as cur:
 		cur.execute(
@@ -140,6 +165,7 @@ def upsert_summary(conn, paper_id, fields, model_version):
 		)
 
 
+@database_reconnect
 def mark_scoring_results(conn, attempted, responded):
 	if not attempted:
 		return
