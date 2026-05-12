@@ -20,11 +20,18 @@ def test_send_digest_run_step_maps_every_required_env_var(var):
 	# Regression guard for #19: a secret in repo settings is not exposed to the
 	# runner unless the step's env block lists it.
 	env = _send_digest_run_step_env()
-	assert var in env, f'{var} is in main.REQUIRED_ENV_VARS but missing from the send-digest step env block.'
+	assert var in env, (
+		f'{var} is required by main.REQUIRED_ENV_VARS but is not mapped in the '
+		f'send-digest "Run research agent" step. Add it to the env block so the '
+		f'GitHub Actions runner exposes it to main.py.'
+	)
 
 
 @pytest.mark.parametrize('var', main.REQUIRED_ENV_VARS)
 def test_send_digest_run_step_sources_required_var_from_secrets(var):
 	env = _send_digest_run_step_env()
 	expression = env[var]
-	assert f'secrets.{var}' in expression, f'{var} must reference secrets.{var}, got {expression!r}.'
+	assert f'secrets.{var}' in expression, (
+		f'{var} in the send-digest step does not reference secrets.{var}; '
+		f'got {expression!r}. A hardcoded value would leak in workflow logs.'
+	)
