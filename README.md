@@ -19,6 +19,18 @@ Copy `.env.example` to `.env` for local use. Every variable except `DATABASE_URL
 | `DATABASE_URL_TEST` | tests only | `tests/` | Separate Neon branch for `pytest -m integration` |
 | `CODECOV_TOKEN` | CI only | GitHub Actions | Upload step in the workflow |
 
+## Configuration
+
+Pipeline behaviour lives in `config/digest.yaml`. Gemini-facing keys:
+
+| Key | Default | Purpose |
+|---|---|---|
+| `gemini_model` | `gemini-3.1-flash-lite` | Model used by scorer and summariser |
+| `gemini_base_url` | `https://generativelanguage.googleapis.com/v1beta` | Base URL for `generateContent` |
+| `gemini_upload_base_url` | `https://generativelanguage.googleapis.com/upload/v1beta` | Base URL for the Files API resumable upload |
+
+Swap the model by editing `gemini_model`; the scorer and summariser pick it up on next run with no code change.
+
 ## Running tests with coverage
 
 Install dev dependencies:
