@@ -31,6 +31,10 @@ def stub_db(mocker):
 	return {
 		'search': mocker.patch('db.search_papers', return_value=[]),
 		'count': mocker.patch('db.count_papers', return_value=0),
+		'latest_rating': mocker.patch('db.get_latest_rating', return_value=None),
+		'latest_field': mocker.patch('db.get_latest_field_feedback', return_value={}),
+		'insert_rating': mocker.patch('db.insert_rating'),
+		'insert_feedback': mocker.patch('db.insert_summary_feedback'),
 	}
 
 
@@ -206,28 +210,64 @@ def test_modal_meta_omits_rating_when_unrated(stub_db):
 	assert not any(_COPY['icons']['rating_star'] in m for m in modal_meta)
 
 
-def test_modal_renders_paper_and_pdf_links_as_anchor_tags(stub_db):
+def test_modal_renders_paper_and_pdf_links_in_actions_row(stub_db):
+	# Both action links sit on their own right-aligned row just above the first section divider, reachable without scrolling past the summary.
 	stub_db['search'].return_value = [_make_paper()]
 	stub_db['count'].return_value = 1
 	at = AppTest.from_file(_APP_PATH).run()
 	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
 	title_button.click().run()
-	link_blocks = [m.value for m in at.markdown if 'class="row-links"' in m.value]
-	assert any('<a href="https://example/p1"' in m for m in link_blocks)
-	assert any('<a href="https://example/p1.pdf"' in m for m in link_blocks)
-	assert any('open paper' in m for m in link_blocks)
-	assert any('open pdf' in m for m in link_blocks)
+	action_blocks = [m.value for m in at.markdown if 'class="modal-actions"' in m.value]
+	assert any('class="modal-action-link" href="https://example/p1"' in m for m in action_blocks)
+	assert any('class="modal-action-link" href="https://example/p1.pdf"' in m for m in action_blocks)
+	assert any('open paper' in m for m in action_blocks)
+	assert any('open pdf' in m for m in action_blocks)
 
 
-def test_modal_omits_pdf_link_when_paper_lacks_pdf_url(stub_db):
+def test_modal_does_not_render_bottom_row_links_block(stub_db):
+	# Links live in the modal-actions row now; the bottom row-links container must not appear at all.
+	stub_db['search'].return_value = [_make_paper()]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	assert not any('class="row-links"' in m.value for m in at.markdown)
+
+
+def test_modal_actions_row_omits_pdf_link_when_paper_lacks_pdf_url(stub_db):
 	stub_db['search'].return_value = [_make_paper(pdf_url=None)]
 	stub_db['count'].return_value = 1
 	at = AppTest.from_file(_APP_PATH).run()
 	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
 	title_button.click().run()
-	link_blocks = [m.value for m in at.markdown if 'class="row-links"' in m.value]
-	assert any('open paper' in m for m in link_blocks)
-	assert not any('open pdf' in m for m in link_blocks)
+	action_blocks = [m.value for m in at.markdown if 'class="modal-actions"' in m.value]
+	assert action_blocks
+	assert not any('open pdf' in m for m in action_blocks)
+	# Open-paper link is still present because that URL is set.
+	assert any('open paper' in m for m in action_blocks)
+
+
+def test_modal_actions_row_omits_open_paper_link_when_paper_lacks_url(stub_db):
+	stub_db['search'].return_value = [_make_paper(url=None)]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	action_blocks = [m.value for m in at.markdown if 'class="modal-actions"' in m.value]
+	assert action_blocks
+	assert not any('open paper' in m for m in action_blocks)
+	# PDF link is still present because that URL is set.
+	assert any('open pdf' in m for m in action_blocks)
+
+
+def test_modal_actions_row_does_not_render_when_paper_has_neither_url(stub_db):
+	stub_db['search'].return_value = [_make_paper(url=None, pdf_url=None)]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	# When both URLs are missing the actions wrapper itself shouldn't render at all.
+	assert not any('class="modal-actions"' in m.value for m in at.markdown)
 
 
 def test_modal_skips_missing_summary_fields(stub_db):
@@ -342,3 +382,149 @@ def test_app_page_status_reflects_current_page_and_total(stub_db):
 	at = AppTest.from_file(_APP_PATH).run()
 	page_status = [m.value for m in at.markdown if 'class="page-status"' in m.value]
 	assert any('1 / 3' in m for m in page_status)
+
+
+# -- review form (rating + per-field feedback) --
+
+
+def _open_modal(stub_db, paper=None):
+	# Render the app, open the modal for the (only) paper, return the AppTest handle.
+	stub_db['search'].return_value = [paper or _make_paper()]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	return at
+
+
+def _submit_button(at):
+	return next(b for b in at.button if b.label == _COPY['review']['submit'])
+
+
+def test_form_renders_five_sliders_four_textareas_and_submit_when_all_fields_present(stub_db):
+	at = _open_modal(stub_db)
+	slider_keys = {s.key for s in at.slider}
+	expected_field_keys = {
+		f'rating_p1_{field}'
+		for field, _ in [('methodology', None), ('findings', None), ('relevance', None), ('limitations', None)]
+	}
+	assert expected_field_keys.issubset(slider_keys)
+	assert 'overall_p1' in slider_keys
+	# Five sliders total: four field + one overall. Four textareas, one per field.
+	assert len([s for s in at.slider if s.key in expected_field_keys or s.key == 'overall_p1']) == 5
+	assert len(at.text_area) == 4
+	assert _submit_button(at) is not None
+
+
+def test_form_does_not_render_before_modal_opens(stub_db):
+	stub_db['search'].return_value = [_make_paper()]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	# Modal-only widgets must not bleed onto the list view.
+	assert len(at.slider) == 0
+	assert len(at.text_area) == 0
+
+
+def test_form_omits_section_slider_and_textarea_when_field_is_missing(stub_db):
+	# Only methodology populated; the form should render 1 field slider + 1 textarea + 1 overall slider, with submit still present.
+	at = _open_modal(stub_db, paper=_make_paper(findings=None, relevance=None, limitations=None))
+	slider_keys = {s.key for s in at.slider}
+	assert 'rating_p1_methodology' in slider_keys
+	assert 'rating_p1_findings' not in slider_keys
+	assert 'overall_p1' in slider_keys
+	assert len(at.text_area) == 1
+
+
+def test_form_defaults_to_three_when_no_prior_rating(stub_db):
+	at = _open_modal(stub_db)
+	overall = next(s for s in at.slider if s.key == 'overall_p1')
+	field = next(s for s in at.slider if s.key == 'rating_p1_methodology')
+	assert overall.value == 3
+	assert field.value == 3
+
+
+def test_form_pre_fills_overall_from_latest_rating(stub_db):
+	stub_db['latest_rating'].return_value = 4
+	at = _open_modal(stub_db)
+	overall = next(s for s in at.slider if s.key == 'overall_p1')
+	assert overall.value == 4
+
+
+def test_form_pre_fills_field_rating_and_correction_from_latest_feedback(stub_db):
+	stub_db['latest_field'].return_value = {'methodology': {'rating': 5, 'correction': 'reworded'}}
+	at = _open_modal(stub_db)
+	slider = next(s for s in at.slider if s.key == 'rating_p1_methodology')
+	textarea = next(t for t in at.text_area if t.key == 'correction_p1_methodology')
+	assert slider.value == 5
+	assert textarea.value == 'reworded'
+
+
+def test_form_submit_writes_one_rating_row_with_overall_value(stub_db):
+	at = _open_modal(stub_db)
+	at.slider(key='overall_p1').set_value(5)
+	_submit_button(at).click().run()
+	stub_db['insert_rating'].assert_called_once()
+	call = stub_db['insert_rating'].call_args
+	assert call.args[1] == 'p1'
+	assert call.args[2] == 5
+
+
+def test_form_submit_writes_four_summary_feedback_rows_one_per_field(stub_db):
+	at = _open_modal(stub_db)
+	_submit_button(at).click().run()
+	assert stub_db['insert_feedback'].call_count == 4
+	fields_written = {c.args[2] for c in stub_db['insert_feedback'].call_args_list}
+	assert fields_written == {'methodology', 'findings', 'relevance', 'limitations'}
+
+
+def test_form_submit_writes_per_field_rating_value(stub_db):
+	at = _open_modal(stub_db)
+	at.slider(key='rating_p1_findings').set_value(2)
+	_submit_button(at).click().run()
+	findings_call = next(c for c in stub_db['insert_feedback'].call_args_list if c.args[2] == 'findings')
+	assert findings_call.kwargs['rating'] == 2
+
+
+def test_form_submit_stores_correction_when_non_empty(stub_db):
+	at = _open_modal(stub_db)
+	at.text_area(key='correction_p1_relevance').set_value('clarifies the BPD link')
+	_submit_button(at).click().run()
+	relevance_call = next(c for c in stub_db['insert_feedback'].call_args_list if c.args[2] == 'relevance')
+	assert relevance_call.kwargs['correction'] == 'clarifies the BPD link'
+
+
+def test_form_submit_stores_none_when_correction_is_empty(stub_db):
+	at = _open_modal(stub_db)
+	_submit_button(at).click().run()
+	# Default textarea value is empty; persisted as NULL to keep summary_feedback's correction column meaningful.
+	for call in stub_db['insert_feedback'].call_args_list:
+		assert call.kwargs['correction'] is None
+
+
+def test_form_submit_stores_none_when_correction_is_whitespace_only(stub_db):
+	at = _open_modal(stub_db)
+	at.text_area(key='correction_p1_methodology').set_value('   \n  ')
+	_submit_button(at).click().run()
+	methodology_call = next(c for c in stub_db['insert_feedback'].call_args_list if c.args[2] == 'methodology')
+	assert methodology_call.kwargs['correction'] is None
+
+
+def test_form_resubmit_appends_new_rows_each_time(stub_db):
+	# Append-only event log: each submit appends one ratings row + one summary_feedback row per rendered field. Latest-row semantics live in db.get_latest_*.
+	at = _open_modal(stub_db)
+	_submit_button(at).click().run()
+	# st.dialog closes on the post-submit rerun; re-open it before submitting again.
+	next(b for b in at.button if b.label == 'Attention Is All You Need').click().run()
+	_submit_button(at).click().run()
+	assert stub_db['insert_rating'].call_count == 2
+	assert stub_db['insert_feedback'].call_count == 8
+
+
+def test_form_submit_skips_summary_feedback_for_missing_fields(stub_db):
+	# When a paper only has methodology, only one summary_feedback row should be written on submit (not four).
+	at = _open_modal(stub_db, paper=_make_paper(findings=None, relevance=None, limitations=None))
+	_submit_button(at).click().run()
+	assert stub_db['insert_feedback'].call_count == 1
+	assert stub_db['insert_feedback'].call_args.args[2] == 'methodology'
+	# Overall rating is still recorded even when only one section is rendered.
+	stub_db['insert_rating'].assert_called_once()

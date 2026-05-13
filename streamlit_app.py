@@ -24,6 +24,9 @@ SUMMARY_FIELDS = (
 	('relevance', 'RELEVANCE'),
 	('limitations', 'LIMITATIONS'),
 )
+RATING_MIN = 1
+RATING_MAX = 5
+RATING_DEFAULT = 3
 
 
 def _db_url_var():
@@ -83,23 +86,80 @@ def _show_paper(paper):
 		sep = f' {COPY["icons"]["meta_separator"]} '
 		st.markdown(f'<div class="modal-meta">{sep.join(meta)}</div>', unsafe_allow_html=True)
 
-	for field, label_text in SUMMARY_FIELDS:
-		value = paper.get(field)
-		if value:
+	# External links sit on their own right-aligned row just above the first section divider, so they're visible alongside metadata but don't crowd the title.
+	action_links = []
+	if paper.get('url'):
+		action_links.append(
+			f'<a class="modal-action-link" href="{paper["url"]}" target="_blank">{COPY["buttons"]["open_paper"]}</a>'
+		)
+	if paper.get('pdf_url'):
+		action_links.append(
+			f'<a class="modal-action-link" href="{paper["pdf_url"]}" target="_blank">{COPY["buttons"]["open_pdf"]}</a>'
+		)
+	if action_links:
+		st.markdown(f'<div class="modal-actions">{"".join(action_links)}</div>', unsafe_allow_html=True)
+
+	paper_id = paper['paper_id']
+	conn = _get_connection()
+	latest_overall = db.get_latest_rating(conn, paper_id)
+	latest_field = db.get_latest_field_feedback(conn, paper_id)
+
+	# Wrap the per-field sections + sliders + overall + submit in one form so slider/textarea edits batch into a single rerun on submit, not per-change.
+	with st.form(key=f'review_{paper_id}', clear_on_submit=False):
+		rendered_fields = []
+		for field, label_text in SUMMARY_FIELDS:
+			value = paper.get(field)
+			if not value:
+				continue
+			rendered_fields.append(field)
 			st.markdown(
 				f'<hr class="section-divider"/>'
 				f'<div class="section-label">{label_text}</div>'
 				f'<div class="section-body">{value}</div>',
 				unsafe_allow_html=True,
 			)
+			prev = latest_field.get(field) or {}
+			st.slider(
+				COPY['review']['section_rating_label'],
+				min_value=RATING_MIN,
+				max_value=RATING_MAX,
+				value=prev.get('rating') or RATING_DEFAULT,
+				key=f'rating_{paper_id}_{field}',
+			)
+			# Collapsed by default to keep the modal compact; auto-expanded when a prior correction exists so the user can see what was written before.
+			with st.expander(COPY['review']['correction_label'], expanded=bool(prev.get('correction'))):
+				st.text_area(
+					COPY['review']['correction_label'],
+					value=prev.get('correction') or '',
+					placeholder=COPY['review']['correction_placeholder'],
+					key=f'correction_{paper_id}_{field}',
+					label_visibility='collapsed',
+				)
 
-	links = []
-	if paper.get('url'):
-		links.append(f'<a href="{paper["url"]}" target="_blank">{COPY["buttons"]["open_paper"]}</a>')
-	if paper.get('pdf_url'):
-		links.append(f'<a href="{paper["pdf_url"]}" target="_blank">{COPY["buttons"]["open_pdf"]}</a>')
-	if links:
-		st.markdown(f'<div class="row-links">{"".join(links)}</div>', unsafe_allow_html=True)
+		st.markdown('<hr class="section-divider"/>', unsafe_allow_html=True)
+		st.slider(
+			COPY['review']['overall_label'],
+			min_value=RATING_MIN,
+			max_value=RATING_MAX,
+			value=latest_overall or RATING_DEFAULT,
+			key=f'overall_{paper_id}',
+		)
+		# on_click runs before the post-submit rerun. st.dialog closes the modal on that rerun, so the write has to happen here (not via an `if submitted` block).
+		st.form_submit_button(
+			COPY['review']['submit'], on_click=_persist_review, args=(conn, paper_id, rendered_fields)
+		)
+
+	# Paper and PDF links live in the title row at the top of the modal so they're reachable without scrolling past the summary.
+
+
+def _persist_review(conn, paper_id, rendered_fields):
+	# Append-only: every submit writes a new ratings row and one summary_feedback row per rendered field. Readers select latest via db.get_latest_*.
+	db.insert_rating(conn, paper_id, st.session_state[f'overall_{paper_id}'])
+	for field in rendered_fields:
+		correction = (st.session_state.get(f'correction_{paper_id}_{field}') or '').strip() or None
+		db.insert_summary_feedback(
+			conn, paper_id, field, rating=st.session_state[f'rating_{paper_id}_{field}'], correction=correction
+		)
 
 
 def _render_header():

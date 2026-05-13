@@ -31,3 +31,10 @@ buttons:
 authors:
   none: 'No authors listed'
   etal_suffix: ' et al.'
+
+review:
+  section_rating_label: 'Rating'
+  overall_label: 'Overall rating'
+  correction_label: 'Correction'
+  correction_placeholder: 'optional note or rewrite'
+  submit: 'Save review'
