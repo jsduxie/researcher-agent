@@ -107,9 +107,8 @@ def test_download_pdf_against_live_arxiv_url():
 
 
 def test_upload_and_generate_against_gemini_files_api():
-	# Round-trips a tiny synthetic PDF through the Files API: upload, then
-	# generate. We don't care what Gemini returns about the content, only
-	# that the two-step protocol completes and yields non-empty text.
+	# Round-trip a tiny synthetic PDF through the Files API (upload + generate);
+	# we only check the two-step protocol completes with non-empty text.
 	pdf_bytes = _build_minimal_pdf('This paper proposes a transformer for BPD detection.')
 	file_uri = _run_or_skip_on_gemini_5xx(
 		lambda: upload_pdf_to_gemini(pdf_bytes, 'integration-test.pdf', _GEMINI_API_KEY)
@@ -125,13 +124,10 @@ def test_upload_and_generate_against_gemini_files_api():
 
 
 def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
-	# Constructed paper dict mimicking Semantic Scholar's shape, with a real
-	# arXiv PDF. Tests the full PDF path inside summarise_paper end to end.
-	# summarise_paper swallows transport errors and returns None on PDF failure;
-	# without an abstract to fall back to, a transient Gemini outage shows up as
-	# result is None. Skip in that case rather than fail.
+	# End-to-end PDF path against a real arXiv URL, no abstract fallback. A transient
+	# Gemini outage surfaces as result is None, which we skip rather than fail.
 	paper = {'paperId': _ARXIV_PAPER_ID, 'title': 'Attention Is All You Need', 'openAccessPdf': {'url': _ARXIV_PDF_URL}}
-	result = summarise_paper(paper, gemini_fn=None, conn=None, api_key=_GEMINI_API_KEY)
+	result = summarise_paper(paper, gemini_fn=None, database_url=None, api_key=_GEMINI_API_KEY)
 
 	if result is None:
 		pytest.skip('summarise_paper returned None (likely transient Gemini outage on the PDF path)')
@@ -139,9 +135,8 @@ def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 		assert field in result
 		assert isinstance(result[field], str)
 		assert result[field].strip()
-	# At least one field should be a real summary, not just the missing-data placeholder.
-	# (A full PDF of this paper produces all four; this is a soft check that survives
-	# transient Gemini quirks.)
+	# At least one real summary field (not the placeholder); a full PDF produces all four
+	# but this soft check tolerates transient Gemini quirks.
 	assert any(result[f] != MISSING_FIELD_PLACEHOLDER for f in ('methodology', 'findings', 'relevance', 'limitations'))
 
 
