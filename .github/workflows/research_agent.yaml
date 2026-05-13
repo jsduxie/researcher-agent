@@ -37,7 +37,7 @@ jobs:
           ruff format --check .
 
       - name: Unit tests
-        run: pytest -m 'not integration' --cov --cov-branch --cov-report=term
+        run: pytest -m 'not integration' --cov --cov-branch --cov-report=term --junitxml=junit-unit.xml
 
       - name: Integration tests
         if: always() && (env.DATABASE_URL_TEST != '' || env.GEMINI_API_KEY != '')
@@ -45,7 +45,7 @@ jobs:
           # PR pushes opt into the long-idle test; push-to-main and the scheduled
           # cron skip it so the post-merge / daily CI stays fast.
           RUN_LONG_INTEGRATION: ${{ github.event_name == 'pull_request' && '1' || '0' }}
-        run: pytest -m integration --cov-append --cov-branch --cov-report=term
+        run: pytest -m integration --cov-append --cov-branch --cov-report=term --junitxml=junit-integration.xml
 
       - name: Coverage reports
         if: always()
@@ -68,6 +68,13 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           fail_ci_if_error: false
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: junit-unit.xml,junit-integration.xml
 
   send-digest:
     needs: test
