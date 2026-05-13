@@ -29,8 +29,7 @@ def test_score_colour_non_int_falls_back(value):
 
 
 def test_score_colour_bool_treated_as_int_per_current_behaviour():
-	# bool subclasses int in Python; current behaviour maps True -> 1 -> grey.
-	# Documented to surface this if it ever needs to change.
+	# bool subclasses int in Python; current behaviour maps True to 1 to grey. Documented to surface this if it ever needs to change.
 	assert score_colour(True) == '#64748b'
 
 

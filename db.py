@@ -53,8 +53,7 @@ def session(database_url):
 
 
 def database_reconnect(fn):
-	# Catches a single psycopg.OperationalError on the wrapped helper, opens a fresh
-	# session from conn._database_url, and retries the call exactly once.
+	# Catches a single psycopg.OperationalError on the wrapped helper, opens a fresh session from conn._database_url, and retries exactly once.
 	@functools.wraps(fn)
 	def wrapper(conn, *args, **kwargs):
 		try:

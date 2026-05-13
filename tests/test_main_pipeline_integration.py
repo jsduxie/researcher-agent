@@ -63,8 +63,7 @@ def _gemini_callback(request):
 
 @responses.activate
 def test_main_runs_end_to_end_with_real_db_and_http_mocked_gemini(clean_db, env, mocker):
-	# Two papers with no openAccessPdf so the summariser stays on the abstract-only
-	# path and every Gemini hit lands on GEMINI_URL (not the Files API).
+	# Two papers with no openAccessPdf so the summariser stays on the abstract-only path and every Gemini hit lands on GEMINI_URL (not the Files API).
 	papers = [
 		{'paperId': 'p1', 'title': 'Paper 1', 'abstract': 'Abstract one.', 'citationCount': 5, 'authors': []},
 		{'paperId': 'p2', 'title': 'Paper 2', 'abstract': 'Abstract two.', 'citationCount': 3, 'authors': []},
@@ -88,8 +87,7 @@ def test_main_runs_end_to_end_with_real_db_and_http_mocked_gemini(clean_db, env,
 
 @responses.activate
 def test_main_survives_when_every_gemini_call_returns_429(clean_db, env, mocker):
-	# Reproduces the 2026-05-12 failure (every Gemini batch 429s); the scoped-session
-	# pipeline must complete cleanly with papers_kept=0 instead of crashing.
+	# Reproduces the 2026-05-12 failure (every Gemini batch 429s); the scoped-session pipeline must complete cleanly with papers_kept=0 instead of crashing.
 	papers = [{'paperId': 'p1', 'title': 'Paper 1', 'abstract': 'Abstract one.', 'citationCount': 5, 'authors': []}]
 	mocker.patch('main.fetch_papers', return_value=papers)
 	mocker.patch('main.emailer.send_email')

@@ -26,15 +26,12 @@ GEMINI_BACKOFF_DELAYS = (5, 15, 45)
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
-# The prompt asks for `relevance_to_research` to match the human-readable spec, but
-# the DB column is `relevance`. Map at this boundary so downstream code stays aligned
-# with the schema rather than the prompt.
+# Prompt uses `relevance_to_research` for clarity; DB column is `relevance`. Map at this boundary so downstream code aligns with the schema.
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
 
 def summarise_paper(paper, gemini_fn, database_url=None, api_key=None, on_gemini_call=None):
-	# Two short DB sessions: one for the cache check, one for the persist. The Gemini
-	# work in between runs with no connection open so Neon can auto-suspend.
+	# Two short DB sessions (cache check, then persist); Gemini work in between runs with no connection open so Neon can auto-suspend.
 	paper_id = paper.get('paperId')
 	title = (paper.get('title') or '')[:60]
 
@@ -64,8 +61,7 @@ def summarise_paper(paper, gemini_fn, database_url=None, api_key=None, on_gemini
 
 
 def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
-	# `on_gemini_call` fires per attempt of each Gemini API call (Files API upload-init
-	# and generateContent), not once per success. Transport-error attempts count too.
+	# on_gemini_call fires per attempt of each Gemini API call (Files API upload-init and generateContent), not per success. Transport errors count too.
 	try:
 		max_bytes = PDF_MAX_SIZE_MB * 1024 * 1024
 		pdf_bytes = download_pdf(pdf_url, max_bytes)
@@ -82,8 +78,7 @@ def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 
 
 def _summarise_via_abstract(paper, gemini_fn):
-	# The abstract-path counter is fired inside gemini_fn (main wires scorer.gemini's
-	# on_attempt directly); nothing to fire here.
+	# Abstract-path counter is fired inside gemini_fn (main wires scorer.gemini's on_attempt directly); nothing to fire here.
 	title = (paper.get('title') or '')[:60]
 	abstract = paper.get('abstract')
 	if not abstract:
@@ -102,8 +97,7 @@ def _summarise_via_abstract(paper, gemini_fn):
 
 
 def _retry_after_seconds(response):
-	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff
-	# in that case rather than parse dates the API never sends.
+	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff rather than parse dates the API never sends.
 	header = response.headers.get('Retry-After')
 	if header is None:
 		return None
@@ -114,9 +108,7 @@ def _retry_after_seconds(response):
 
 
 def _post_with_retry(url, on_attempt=None, **kwargs):
-	# Retries 429 and 5xx with backoff. After exhaustion returns the final
-	# failed response so the caller's raise_for_status surfaces it consistently
-	# with the non-retry code path.
+	# Retries 429 and 5xx with backoff. After exhaustion returns the final failed response so the caller's raise_for_status surfaces consistently.
 	last = None
 	for attempt in range(len(GEMINI_BACKOFF_DELAYS) + 1):
 		if on_attempt:
@@ -148,9 +140,7 @@ def download_pdf(url, max_size_bytes):
 
 
 def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=None):
-	# Resumable upload: first request announces metadata and gets an upload URL,
-	# second request uploads the bytes to that URL. Auth goes on x-goog-api-key
-	# rather than the URL so the key cannot leak through HTTPError messages.
+	# Resumable upload: first request gets an upload URL, second uploads the bytes. Auth on x-goog-api-key (not URL) so the key can't leak via HTTPError.
 	start_headers = {
 		'X-Goog-Upload-Protocol': 'resumable',
 		'X-Goog-Upload-Command': 'start',

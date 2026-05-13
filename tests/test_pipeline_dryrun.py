@@ -14,8 +14,7 @@ def test_dry_run_uses_fixtures_and_makes_no_network_calls(mocker, capsys):
 
 	mock_get.assert_not_called()
 	mock_post.assert_not_called()
-	# Summariser must stay off the network in dry-run too: PDF path is skipped
-	# because api_key is None, abstract path reads the gemini_summary fixture instead.
+	# Summariser must stay off the network in dry-run too: PDF path is skipped because api_key is None; abstract path reads the gemini_summary fixture instead.
 	mock_summariser_get.assert_not_called()
 	mock_summariser_post.assert_not_called()
 	mock_smtp.assert_not_called()

@@ -27,8 +27,7 @@ def _is_quota_exhausted(response):
 
 
 def gemini(prompt, api_key, retries=3, on_attempt=None):
-	# Auth via header rather than ?key= query param keeps the secret out of any
-	# URL that may surface in HTTPError messages and downstream logs.
+	# Auth via header rather than ?key= query param keeps the secret out of any URL that may surface in HTTPError messages and downstream logs.
 	headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
 
@@ -62,10 +61,7 @@ def parse_gemini_scores(response_text):
 
 
 def apply_scores(papers, scores, threshold):
-	# Returns (enriched, responded_paper_ids). responded covers any paper that got
-	# a valid numeric Gemini score, regardless of threshold or whether the text
-	# fields were complete. Papers missing from this set were never scored
-	# successfully and should be retried on a later run.
+	# Returns (enriched, responded_paper_ids). responded covers any paper with a valid numeric score; missing IDs were never scored and should be retried.
 	if not isinstance(scores, list):
 		print(f'Dropped batch (scores payload not a list, got {type(scores).__name__})')
 		return [], set()

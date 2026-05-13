@@ -16,8 +16,7 @@ from summariser import (
 
 
 def _run_or_skip_on_gemini_5xx(call):
-	# Live Gemini is the most flake-prone dependency here; treat a transient 5xx
-	# as a skip rather than a test failure so CI does not redden over a vendor blip.
+	# Live Gemini is the most flake-prone dependency; treat a transient 5xx as a skip rather than a test failure so CI doesn't redden over a vendor blip.
 	try:
 		return call()
 	except requests.HTTPError as e:
@@ -38,19 +37,13 @@ pytestmark = [
 ]
 
 
-# A stable open-access paper with a well-known arXiv URL. Used by the live
-# download and full-chain tests. arXiv PDF URLs do not change once published.
+# A stable open-access paper with a well-known arXiv URL. Used by the live download and full-chain tests; arXiv PDF URLs don't change once published.
 _ARXIV_PDF_URL = 'https://arxiv.org/pdf/1706.03762.pdf'
 _ARXIV_PAPER_ID = 'attention-is-all-you-need'
 
 
 def _build_minimal_pdf(body_text):
-	"""Hand-roll a syntactically valid PDF with one line of text.
-
-	Avoids committing a binary fixture file and avoids a reportlab dependency.
-	The xref byte offsets are computed dynamically so the PDF parses cleanly
-	regardless of small string-length changes to body_text.
-	"""
+	# Hand-roll a valid PDF with one line of text. Avoids a binary fixture file and a reportlab dependency; xref byte offsets are computed dynamically.
 	stream_payload = f'BT /F1 14 Tf 50 700 Td ({body_text}) Tj ET\n'.encode()
 	objects = [
 		b'<</Type/Catalog/Pages 2 0 R>>',
@@ -107,8 +100,7 @@ def test_download_pdf_against_live_arxiv_url():
 
 
 def test_upload_and_generate_against_gemini_files_api():
-	# Round-trip a tiny synthetic PDF through the Files API (upload + generate);
-	# we only check the two-step protocol completes with non-empty text.
+	# Round-trip a tiny synthetic PDF through the Files API (upload + generate); we only check the two-step protocol completes with non-empty text.
 	pdf_bytes = _build_minimal_pdf('This paper proposes a transformer for BPD detection.')
 	file_uri = _run_or_skip_on_gemini_5xx(
 		lambda: upload_pdf_to_gemini(pdf_bytes, 'integration-test.pdf', _GEMINI_API_KEY)
@@ -124,8 +116,7 @@ def test_upload_and_generate_against_gemini_files_api():
 
 
 def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
-	# End-to-end PDF path against a real arXiv URL, no abstract fallback. A transient
-	# Gemini outage surfaces as result is None, which we skip rather than fail.
+	# End-to-end PDF path against a real arXiv URL with no abstract fallback. Transient Gemini outage surfaces as result is None, which we skip rather than fail.
 	paper = {'paperId': _ARXIV_PAPER_ID, 'title': 'Attention Is All You Need', 'openAccessPdf': {'url': _ARXIV_PDF_URL}}
 	result = summarise_paper(paper, gemini_fn=None, database_url=None, api_key=_GEMINI_API_KEY)
 
@@ -135,8 +126,7 @@ def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 		assert field in result
 		assert isinstance(result[field], str)
 		assert result[field].strip()
-	# At least one real summary field (not the placeholder); a full PDF produces all four
-	# but this soft check tolerates transient Gemini quirks.
+	# At least one real summary field (not the placeholder); a full PDF produces all four but this soft check tolerates transient Gemini quirks.
 	assert any(result[f] != MISSING_FIELD_PLACEHOLDER for f in ('methodology', 'findings', 'relevance', 'limitations'))
 
 
@@ -144,8 +134,7 @@ def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 
 
 def test_summariser_response_parses_when_run_against_a_real_pdf():
-	# Confirms that the live Gemini response with a real PDF parses cleanly
-	# through the same code path the production pipeline uses.
+	# Confirms that the live Gemini response with a real PDF parses cleanly through the same code path the production pipeline uses.
 	pdf_bytes = download_pdf(_ARXIV_PDF_URL, summariser.PDF_MAX_SIZE_MB * 1024 * 1024)
 	file_uri = _run_or_skip_on_gemini_5xx(lambda: upload_pdf_to_gemini(pdf_bytes, 'attention.pdf', _GEMINI_API_KEY))
 	prompt = summariser.SUMMARISER_PROMPT.format(

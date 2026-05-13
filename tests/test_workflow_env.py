@@ -17,8 +17,7 @@ def _send_digest_run_step_env():
 
 @pytest.mark.parametrize('var', main.REQUIRED_ENV_VARS)
 def test_send_digest_run_step_maps_every_required_env_var(var):
-	# Regression guard for #19: a secret in repo settings is not exposed to the
-	# runner unless the step's env block lists it.
+	# Regression guard for #19: a secret in repo settings is not exposed to the runner unless the step's env block lists it.
 	env = _send_digest_run_step_env()
 	assert var in env, (
 		f'{var} is required by main.REQUIRED_ENV_VARS but is not mapped in the '

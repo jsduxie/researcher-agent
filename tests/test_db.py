@@ -6,8 +6,7 @@ import db
 @pytest.fixture
 def mock_conn(mocker):
 	conn = mocker.MagicMock()
-	# conn.cursor() is used as a context manager; conn.transaction() too.
-	# MagicMock supports both protocols out of the box.
+	# conn.cursor() is used as a context manager; conn.transaction() too. MagicMock supports both protocols out of the box.
 	return conn
 
 
@@ -399,8 +398,7 @@ def test_upsert_summary_uses_insert_on_conflict(mock_conn):
 
 
 def test_upsert_summary_preserves_created_at_on_conflict(mock_conn):
-	# The ON CONFLICT clause must only touch updated_at; otherwise the column
-	# literally named created_at stops representing creation time.
+	# The ON CONFLICT clause must only touch updated_at; otherwise the column literally named created_at stops representing creation time.
 	db.upsert_summary(mock_conn, 'abc', {}, 'test-model-v1')
 	sql = _cursor(mock_conn).execute.call_args.args[0]
 	do_update_clause = sql.split('DO UPDATE')[1]
@@ -416,9 +414,7 @@ def test_upsert_summary_binds_all_fields_in_order(mock_conn):
 
 
 def test_upsert_summary_binds_none_for_missing_field_keys(mock_conn):
-	# A field absent from the dict should bind NULL rather than raise. Callers using a
-	# placeholder string ("Not available from this source.") will provide the key; this
-	# guards against a partial Gemini response with keys missing entirely.
+	# A field absent from the dict should bind NULL. Callers using a placeholder ('Not available') always provide the key; this guards a partial Gemini response.
 	db.upsert_summary(mock_conn, 'abc', {'methodology': 'm'}, 'test-model-v1')
 	params = _cursor(mock_conn).execute.call_args.args[1]
 	assert params == ('abc', 'm', None, None, None, 'test-model-v1')
@@ -523,8 +519,7 @@ def test_database_reconnect_propagates_when_conn_has_no_database_url(mocker):
 
 
 def _setup_reconnect(mock_conn, mocker):
-	# Common setup: original conn's cursor raises OperationalError on every execute;
-	# a fresh conn is returned by db.psycopg.connect for the reconnect.
+	# Common setup: original conn's cursor raises OperationalError on every execute; a fresh conn returned by db.psycopg.connect for the reconnect.
 	import psycopg
 
 	mock_conn._database_url = 'postgresql://x'

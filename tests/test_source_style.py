@@ -15,8 +15,7 @@ def _project_python_files():
 
 _PY_FILES = sorted(_project_python_files())
 
-# Model names belong in config/digest.yaml, not source. The pattern catches any
-# `gemini-<version>-<flavour>` literal so future regressions trip the guard.
+# Model names belong in config/digest.yaml, not source. The pattern catches any `gemini-<version>-<flavour>` literal so future regressions trip the guard.
 _GEMINI_MODEL_LITERAL_RE = re.compile(r'gemini-\d+(?:\.\d+)*-[\w-]+')
 
 

@@ -45,8 +45,7 @@ def test_fails_and_reports_each_module_below_the_floor(tmp_path, capsys):
 
 
 def test_skips_empty_modules_regardless_of_reported_percentage(tmp_path, capsys):
-	# A 0-statement file should be ignored even if its percent_covered is below the
-	# floor (coverage.py can emit 0.0 here). Without the skip, this would fail the gate.
+	# A 0-statement file should be ignored even if its percent_covered is below the floor (coverage.py can emit 0.0 here); without the skip this would fail the gate.
 	cov = tmp_path / 'coverage.json'
 	_write_coverage_json(
 		cov,

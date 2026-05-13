@@ -11,8 +11,7 @@ def main(coverage_path: Path = DEFAULT_COVERAGE_JSON) -> int:
 	failures = []
 	for filename, info in sorted(data['files'].items()):
 		summary = info['summary']
-		# Empty source files (0 statements) have a meaningless percent_covered, so skip.
-		# Belt-and-braces with coverage's skip_empty in pyproject.
+		# Empty source files (0 statements) have a meaningless percent_covered; skip. Belt-and-braces with coverage's skip_empty in pyproject.
 		if summary['num_statements'] == 0:
 			continue
 		pct = summary['percent_covered']

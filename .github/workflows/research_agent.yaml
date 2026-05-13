@@ -11,10 +11,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Job-level env so the integration step can gate on whether each secret is
-    # present. Fork PRs receive '' for missing secrets, which would otherwise
-    # cause db.connect('') (or a live Gemini call with no key) to fail instead
-    # of cleanly skipping via each suite's own skipif.
+    # Job-level env so the integration step can gate per-secret. Fork PRs receive '' for missing secrets, which would otherwise fail db.connect('') or live Gemini calls.
     env:
       DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -42,8 +39,7 @@ jobs:
       - name: Integration tests
         if: always() && (env.DATABASE_URL_TEST != '' || env.GEMINI_API_KEY != '')
         env:
-          # PR pushes opt into the long-idle test; push-to-main and the scheduled
-          # cron skip it so the post-merge / daily CI stays fast.
+          # PR pushes opt into the long-idle test; push-to-main and the scheduled cron skip it so the post-merge / daily CI stays fast.
           RUN_LONG_INTEGRATION: ${{ github.event_name == 'pull_request' && '1' || '0' }}
         run: pytest -m integration --cov-append --cov-branch --cov-report=term --junitxml=junit-integration.xml
 

@@ -6,9 +6,7 @@ import db
 
 _DATABASE_URL_TEST = os.environ.get('DATABASE_URL_TEST')
 
-# `not _DATABASE_URL_TEST` covers both None and empty string. GitHub Actions sets
-# missing secrets to '' (notably on pull_request runs from forks), so an `is None`
-# check would let the tests run with an empty URL and fail at db.connect('').
+# `not _DATABASE_URL_TEST` covers None and empty string. GitHub Actions sets missing secrets to '' on fork PRs, so an `is None` check would run on '' and fail.
 pytestmark = [
 	pytest.mark.integration,
 	pytest.mark.skipif(
@@ -318,9 +316,7 @@ def test_mark_scoring_results_noops_on_empty_attempted(conn):
 
 
 def test_upsert_summary_preserves_created_at_across_re_upsert(conn):
-	# A second upsert for the same paper_id must keep the original created_at while
-	# advancing updated_at. Verifies the ON CONFLICT clause does not overwrite the
-	# creation timestamp.
+	# A second upsert for the same paper_id must keep created_at while advancing updated_at. Verifies the ON CONFLICT clause doesn't overwrite creation.
 	db.upsert_paper(conn, {'paperId': 'p1'})
 
 	db.upsert_summary(conn, 'p1', {'methodology': 'first'}, 'v1')
@@ -341,8 +337,7 @@ def test_upsert_summary_preserves_created_at_across_re_upsert(conn):
 
 
 def test_paper_with_failed_gemini_run_is_retried_on_next_run(conn):
-	# Run 1: paper is upserted and attempted, but Gemini returned nothing usable
-	# (responded set is empty). scored_at stays NULL.
+	# Run 1: paper is upserted and attempted, but Gemini returned nothing usable (responded set is empty). scored_at stays NULL.
 	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T'})
 	db.mark_scoring_results(conn, attempted=['p1'], responded=set())
 

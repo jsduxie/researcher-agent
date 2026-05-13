@@ -49,8 +49,7 @@ def _collect_papers(api_key):
 
 
 def _gemini_score(prompt, retries=3):
-	# Counter fires per attempt inside scorer.gemini's retry loop so a 429 storm
-	# trips the budget within a small multiple of the cap rather than running silent.
+	# Counter fires per attempt inside scorer.gemini's retry loop so a 429 storm trips the budget within a small multiple of the cap.
 	if DRY_RUN:
 		_record_gemini_call()
 		return (_FIXTURES / 'gemini_score.json').read_text()
@@ -70,8 +69,7 @@ def _record_gemini_call():
 
 
 def _summarise_kept_papers(enriched, database_url):
-	# summariser.summarise_paper manages two short DB sessions internally (cache check,
-	# then persist) so the connection is closed during the Gemini work in between.
+	# summariser.summarise_paper manages two short DB sessions (cache check, then persist); no DB open during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
 	for paper in enriched:
 		try:
@@ -119,8 +117,7 @@ def main(argv=None):
 	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
 	unique = dedup_papers(all_papers)
-	# Papers without paperId cannot be persisted (paper_id is the PK) and cannot be
-	# deduplicated across runs, so drop them up front rather than crashing in upsert.
+	# Papers without paperId can't be persisted (paper_id is the PK) or deduplicated across runs; drop up front rather than crashing in upsert.
 	missing_id = [p for p in unique if not p.get('paperId')]
 	if missing_id:
 		print(f'Dropped {len(missing_id)} paper(s) without paperId (cannot persist)')

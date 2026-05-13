@@ -54,8 +54,7 @@ def test_dedup_collapses_papers_with_neither_id_nor_title():
 
 
 def test_dedup_does_not_collide_paper_id_with_matching_title():
-	# Regression for namespaced dedup keys: paperId 'abc' must not collide
-	# with a paper whose only identifier is title='abc'.
+	# Regression for namespaced dedup keys: paperId 'abc' must not collide with a paper whose only identifier is title='abc'.
 	papers = [{'paperId': 'abc'}, {'title': 'abc'}]
 	assert dedup_papers(papers) == papers
 
@@ -100,8 +99,7 @@ def test_fetch_papers_returns_empty_list_when_data_key_missing():
 
 @responses.activate
 def test_fetch_papers_raises_fetch_error_on_invalid_json_body():
-	# 2xx with malformed body indicates an upstream contract change, not a
-	# transient; retrying would just resend the same broken response.
+	# 2xx with malformed body indicates an upstream contract change, not a transient; retrying would just resend the same broken response.
 	responses.get(fetcher.SEMANTIC_SCHOLAR_URL, body='<html>not json</html>', status=200)
 	with pytest.raises(FetchError, match='not valid JSON'):
 		fetch_papers('q', 'test-key')

@@ -23,8 +23,7 @@ def _no_sleep(mocker):
 
 @pytest.fixture(autouse=True)
 def mock_session(mocker):
-	# summariser opens short DB sessions internally via db.session; patch the helper
-	# to yield a stable mock conn so any test passing database_url= gets a usable session.
+	# summariser opens short DB sessions internally via db.session; patch the helper to yield a stable mock conn so tests passing database_url= get a usable session.
 	conn = mocker.MagicMock()
 	session_cm = mocker.MagicMock()
 	session_cm.__enter__.return_value = conn
@@ -62,8 +61,7 @@ def test_parse_strips_surrounding_whitespace():
 
 
 def test_parse_maps_relevance_to_research_to_relevance_column():
-	# The DB column is `relevance`, the prompt key is `relevance_to_research`.
-	# The mapping has to happen here or the data will silently drop.
+	# The DB column is `relevance` but the prompt key is `relevance_to_research`. The mapping has to happen here or the data will silently drop.
 	result = parse_summary_response(_valid_response(relevance_to_research='mapped'))
 	assert result['relevance'] == 'mapped'
 	assert 'relevance_to_research' not in result
@@ -138,8 +136,7 @@ def test_summarise_paper_skips_cache_check_when_no_conn(mocker):
 
 
 def test_summarise_paper_skips_cache_check_when_no_paper_id(mocker):
-	# A paper without a paperId can't be keyed in the cache. We still summarise it
-	# (some upstream paths may want a transient summary) but persistence is skipped.
+	# A paper without a paperId can't be keyed in the cache. We still summarise (some upstream paths may want a transient summary) but persistence is skipped.
 	get_summary = mocker.patch('summariser.db.get_summary')
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
@@ -266,8 +263,7 @@ def test_summarise_paper_returns_none_on_malformed_response(mocker):
 
 
 def test_summarise_paper_persists_partial_response_with_placeholders(mocker):
-	# A response missing one field should still be persisted, with the placeholder
-	# in place. This is the abstract-only fallback behaviour the spec calls for.
+	# A response missing one field should still be persisted with the placeholder; this is the abstract-only fallback behaviour the spec calls for.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	body = json.dumps({'methodology': 'm', 'findings': 'f', 'relevance_to_research': 'r'})  # no limitations
@@ -296,8 +292,7 @@ def test_summarise_paper_handles_paper_with_missing_title(mocker):
 
 
 def test_module_version_is_set():
-	# Persisted alongside summaries so a later prompt or model change can be reasoned
-	# about against historical data.
+	# Persisted alongside summaries so a later prompt or model change can be reasoned about against historical data.
 	assert summariser.MODEL_VERSION
 
 
@@ -305,8 +300,7 @@ def test_module_version_is_set():
 
 
 def test_on_gemini_call_does_not_fire_for_abstract_path_via_summarise_paper(mocker):
-	# Abstract path no longer relays on_gemini_call; the counter fires inside gemini_fn
-	# (scorer.gemini's on_attempt, wired by main). Mocked gemini_fn here, so 0 fires.
+	# Abstract path no longer relays on_gemini_call; the counter fires inside gemini_fn (scorer.gemini's on_attempt, wired by main). Mocked gemini_fn = 0 fires.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
@@ -335,8 +329,7 @@ def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
 
 
 def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
-	# gemini_fn is mocked and raises; the abstract path doesn't relay on_gemini_call,
-	# so it stays at 0 fires. Real per-attempt firing inside scorer.gemini is in test_scorer.py.
+	# gemini_fn is mocked and raises; the abstract path doesn't relay on_gemini_call, so it stays at 0 fires. Real per-attempt firing is in test_scorer.py.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
 	counter = mocker.Mock()
@@ -350,8 +343,7 @@ def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
 
 @responses.activate
 def test_on_gemini_call_fires_per_gemini_attempt_in_pdf_path(mocker):
-	# PDF success path fires per attempt of upload-init + generate (the signed-URL
-	# data upload is not a Gemini API call). One attempt each on the happy path = 2.
+	# PDF success path fires per attempt of upload-init + generate (signed-URL data upload is not a Gemini API call). One attempt each on happy path = 2.
 	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
@@ -375,8 +367,7 @@ def test_on_gemini_call_fires_per_gemini_attempt_in_pdf_path(mocker):
 
 @responses.activate
 def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mocker):
-	# PDF download fails before any _post_with_retry, so 0 fires from PDF path.
-	# Abstract fallback uses mocked gemini_fn which doesn't fire on_attempt internally.
+	# PDF download fails before any _post_with_retry (0 fires from PDF path); abstract fallback uses mocked gemini_fn which doesn't fire on_attempt internally.
 	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
@@ -409,8 +400,7 @@ def test_post_with_retry_fires_on_attempt_per_iteration_via_generate_with_file()
 
 
 def test_no_db_session_is_open_during_summariser_gemini_work(mocker):
-	# Replace the default session mock with a tracker that counts active opens;
-	# snapshot active count at the moment gemini_fn is invoked.
+	# Replace the default session mock with a tracker that counts active opens; snapshot active count at the moment gemini_fn is invoked.
 	from contextlib import contextmanager
 
 	active = [0]
@@ -451,8 +441,7 @@ def test_download_pdf_returns_bytes_on_happy_path():
 
 
 def test_download_pdf_raises_when_declared_content_length_exceeds_cap(mocker):
-	# Isolates the declared-size check from the stream check: a streamed `responses`
-	# body does not surface Content-Length on `r.headers`, so direct-mock the response.
+	# Isolates the declared-size check from the stream check: a streamed `responses` body doesn't surface Content-Length on r.headers, so direct-mock the response.
 	mock_response = mocker.MagicMock()
 	mock_response.__enter__.return_value = mock_response
 	mock_response.headers = {'Content-Length': '200'}
@@ -462,8 +451,7 @@ def test_download_pdf_raises_when_declared_content_length_exceeds_cap(mocker):
 
 
 def test_download_pdf_raises_when_stream_exceeds_cap(mocker):
-	# Simulates a server that lies about (or omits) Content-Length. The stream check
-	# is the safety net; it must fire before the buffer eats unbounded memory.
+	# Simulates a server that lies about (or omits) Content-Length. The stream check is the safety net; it must fire before the buffer eats unbounded memory.
 	mock_response = mocker.MagicMock()
 	mock_response.__enter__.return_value = mock_response
 	mock_response.headers = {}
@@ -505,8 +493,7 @@ def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
 
 @responses.activate
 def test_upload_pdf_to_gemini_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError
-	# messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
 	upload_pdf_to_gemini(b'pdf', 'my-key-value', 'my-key-value-secret')
@@ -607,8 +594,7 @@ def test_generate_with_file_sends_file_data_and_prompt_parts():
 
 @responses.activate
 def test_generate_with_file_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError
-	# messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
 	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	generate_with_file('prompt', 'files/abc', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
@@ -653,8 +639,7 @@ def test_generate_with_file_honours_retry_after_seconds(_no_sleep):
 	responses.post(summariser.GEMINI_GENERATE_URL, status=429, headers={'Retry-After': '11'})
 	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	generate_with_file('p', 'files/abc', 'k')
-	# Retry-After is the only sleep this function triggers; the 11s override is honoured
-	# in place of the 5s default backoff for the first retry.
+	# Retry-After is the only sleep this function triggers; the 11s override is honoured in place of the 5s default backoff for the first retry.
 	delays = [c.args[0] for c in _no_sleep.call_args_list]
 	assert delays == [11]
 
@@ -684,7 +669,7 @@ def test_generate_with_file_raises_when_text_field_missing():
 
 
 def _mock_pdf_pipeline(*, gemini_text=None, upload_url=UPLOAD_TARGET, file_uri='files/abc'):
-	"""Stand up the three HTTP boundaries the PDF path uses with happy-path defaults."""
+	# Stand up the three HTTP boundaries the PDF path uses with happy-path defaults.
 	if gemini_text is None:
 		gemini_text = _valid_response()
 	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
@@ -757,8 +742,7 @@ def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, 
 @responses.activate
 def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
 	responses.get(PDF_URL, body=b'pdf')
-	# 400 fails immediately without engaging the retry path so the test stays
-	# focused on the fallback behaviour rather than retry mechanics.
+	# 400 fails immediately without engaging the retry path so the test stays focused on the fallback behaviour rather than retry mechanics.
 	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=400)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
@@ -833,8 +817,7 @@ def test_summarise_paper_returns_none_when_pdf_fails_and_no_abstract(mocker):
 
 
 def test_summarise_paper_skips_pdf_path_when_no_api_key(mocker):
-	# Without an api_key the PDF path can't authenticate, so we go straight to the
-	# abstract path rather than burn the download trying.
+	# Without an api_key the PDF path can't authenticate, so we go straight to the abstract path rather than burn the download trying.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	get_request = mocker.patch('summariser.requests.get')
