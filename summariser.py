@@ -32,12 +32,15 @@ _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
 
-def summarise_paper(paper, gemini_fn, conn=None, api_key=None, on_gemini_call=None):
+def summarise_paper(paper, gemini_fn, database_url=None, api_key=None, on_gemini_call=None):
+	# Two short DB sessions: one for the cache check, one for the persist. The Gemini
+	# work in between runs with no connection open so Neon can auto-suspend.
 	paper_id = paper.get('paperId')
 	title = (paper.get('title') or '')[:60]
 
-	if conn is not None and paper_id:
-		cached = db.get_summary(conn, paper_id)
+	if database_url and paper_id:
+		with db.session(database_url) as conn:
+			cached = db.get_summary(conn, paper_id)
 		if cached is not None:
 			print(f'Cache hit, skipping summarisation: {title}')
 			return cached
@@ -53,8 +56,9 @@ def summarise_paper(paper, gemini_fn, conn=None, api_key=None, on_gemini_call=No
 	if fields is None:
 		return None
 
-	if conn is not None and paper_id:
-		db.upsert_summary(conn, paper_id, fields, MODEL_VERSION)
+	if database_url and paper_id:
+		with db.session(database_url) as conn:
+			db.upsert_summary(conn, paper_id, fields, MODEL_VERSION)
 
 	return fields
 

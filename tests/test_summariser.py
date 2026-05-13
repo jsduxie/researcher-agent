@@ -21,6 +21,18 @@ def _no_sleep(mocker):
 	return mocker.patch('summariser.time.sleep')
 
 
+@pytest.fixture(autouse=True)
+def mock_session(mocker):
+	# summariser opens short DB sessions internally via db.session; patch the helper
+	# to yield a stable mock conn so any test passing database_url= gets a usable session.
+	conn = mocker.MagicMock()
+	session_cm = mocker.MagicMock()
+	session_cm.__enter__.return_value = conn
+	session_cm.__exit__.return_value = False
+	mocker.patch('summariser.db.session', return_value=session_cm)
+	return {'conn': conn, 'session_cm': session_cm}
+
+
 def _valid_response(**overrides):
 	body = {'methodology': 'method', 'findings': 'find', 'relevance_to_research': 'rel', 'limitations': 'lim'}
 	body.update(overrides)
@@ -108,7 +120,7 @@ def test_summarise_paper_short_circuits_on_cache_hit(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result == cached
 	gemini_fn.assert_not_called()
@@ -120,7 +132,7 @@ def test_summarise_paper_skips_cache_check_when_no_conn(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=None)
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
 
 	get_summary.assert_not_called()
 
@@ -132,7 +144,7 @@ def test_summarise_paper_skips_cache_check_when_no_paper_id(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	get_summary.assert_not_called()
 	upsert.assert_not_called()
@@ -148,23 +160,22 @@ def test_summarise_paper_calls_gemini_and_returns_four_fields(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
 	gemini_fn.assert_called_once()
 
 
-def test_summarise_paper_persists_fresh_summary(mocker):
+def test_summarise_paper_persists_fresh_summary(mocker, mock_session):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
-	conn = mocker.MagicMock()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=conn)
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	upsert.assert_called_once()
 	call = upsert.call_args
-	assert call.args[0] is conn
+	assert call.args[0] is mock_session['conn']
 	assert call.args[1] == 'p1'
 	assert call.args[2] == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
 	assert call.args[3] == MODEL_VERSION
@@ -174,7 +185,7 @@ def test_summarise_paper_does_not_persist_when_conn_is_none(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=None)
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
 
 	upsert.assert_not_called()
 
@@ -184,7 +195,7 @@ def test_summarise_paper_does_not_persist_when_no_paper_id(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	summarise_paper({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	upsert.assert_not_called()
 
@@ -198,7 +209,9 @@ def test_summarise_paper_prompt_includes_abstract_and_context(mocker):
 		captured['prompt'] = prompt
 		return _valid_response()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'unique-abstract-text-xyz'}, fake_gemini, conn=mocker.MagicMock())
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'unique-abstract-text-xyz'}, fake_gemini, database_url='postgresql://x'
+	)
 
 	assert 'unique-abstract-text-xyz' in captured['prompt']
 	assert 'RESEARCH CONTEXT' in captured['prompt']
@@ -212,7 +225,7 @@ def test_summarise_paper_returns_none_when_no_abstract(mocker, capsys):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper({'paperId': 'p1'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	gemini_fn.assert_not_called()
@@ -225,7 +238,7 @@ def test_summarise_paper_returns_none_when_no_abstract(mocker, capsys):
 def test_summarise_paper_returns_none_when_abstract_is_empty(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock()
-	assert summarise_paper({'paperId': 'p1', 'abstract': ''}, gemini_fn, conn=mocker.MagicMock()) is None
+	assert summarise_paper({'paperId': 'p1', 'abstract': ''}, gemini_fn, database_url='postgresql://x') is None
 	gemini_fn.assert_not_called()
 
 
@@ -234,7 +247,7 @@ def test_summarise_paper_returns_none_on_gemini_exception(mocker, capsys):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(side_effect=Exception('rate limit'))
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	upsert.assert_not_called()
@@ -246,7 +259,7 @@ def test_summarise_paper_returns_none_on_malformed_response(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value='not json at all')
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	upsert.assert_not_called()
@@ -260,7 +273,7 @@ def test_summarise_paper_persists_partial_response_with_placeholders(mocker):
 	body = json.dumps({'methodology': 'm', 'findings': 'f', 'relevance_to_research': 'r'})  # no limitations
 	gemini_fn = mocker.Mock(return_value=body)
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is not None
 	assert result['limitations'] == MISSING_FIELD_PLACEHOLDER
@@ -274,7 +287,7 @@ def test_summarise_paper_handles_paper_with_missing_title(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is not None
 
@@ -299,7 +312,9 @@ def test_on_gemini_call_does_not_fire_for_abstract_path_via_summarise_paper(mock
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	counter = mocker.Mock()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
+	)
 
 	counter.assert_not_called()
 
@@ -312,7 +327,9 @@ def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
 	gemini_fn = mocker.Mock()
 	counter = mocker.Mock()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
+	)
 
 	counter.assert_not_called()
 
@@ -324,7 +341,9 @@ def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
 	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
 	counter = mocker.Mock()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock(), on_gemini_call=counter)
+	summarise_paper(
+		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
+	)
 
 	counter.assert_not_called()
 
@@ -346,7 +365,7 @@ def test_on_gemini_call_fires_per_gemini_attempt_in_pdf_path(mocker):
 	summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		mocker.Mock(),
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 		on_gemini_call=counter,
 	)
@@ -367,7 +386,7 @@ def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mock
 	summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 		on_gemini_call=counter,
 	)
@@ -384,6 +403,39 @@ def test_post_with_retry_fires_on_attempt_per_iteration_via_generate_with_file()
 	counter = []
 	generate_with_file('p', 'files/abc', 'k', on_attempt=lambda: counter.append(1))
 	assert len(counter) == 3
+
+
+# -- db session lifecycle inside summarise_paper --
+
+
+def test_no_db_session_is_open_during_summariser_gemini_work(mocker):
+	# Replace the default session mock with a tracker that counts active opens;
+	# snapshot active count at the moment gemini_fn is invoked.
+	from contextlib import contextmanager
+
+	active = [0]
+	active_during_gemini = []
+
+	@contextmanager
+	def tracking_session(url):
+		active[0] += 1
+		try:
+			yield mocker.MagicMock()
+		finally:
+			active[0] -= 1
+
+	mocker.patch('summariser.db.session', side_effect=tracking_session)
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+
+	def gemini_snap(prompt):
+		active_during_gemini.append(active[0])
+		return _valid_response()
+
+	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_snap, database_url='postgresql://x')
+
+	# Cache-check session closed before gemini_fn; persist session opens only after.
+	assert active_during_gemini == [0]
 
 
 # -- download_pdf --
@@ -653,7 +705,7 @@ def test_summarise_paper_pdf_path_returns_four_fields(mocker):
 	result = summarise_paper(
 		{'paperId': 'p1', 'title': 'T', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -667,10 +719,12 @@ def test_summarise_paper_pdf_path_persists_summary(mocker):
 	_mock_pdf_pipeline()
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	upsert = mocker.patch('summariser.db.upsert_summary')
-	conn = mocker.MagicMock()
 
 	summarise_paper(
-		{'paperId': 'p1', 'title': 'T', 'openAccessPdf': {'url': PDF_URL}}, mocker.Mock(), conn=conn, api_key='fake-key'
+		{'paperId': 'p1', 'title': 'T', 'openAccessPdf': {'url': PDF_URL}},
+		mocker.Mock(),
+		database_url='postgresql://x',
+		api_key='fake-key',
 	)
 
 	upsert.assert_called_once()
@@ -690,7 +744,7 @@ def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, 
 	result = summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -713,7 +767,7 @@ def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
 	result = summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -734,7 +788,7 @@ def test_summarise_paper_falls_back_when_generate_fails(mocker):
 	result = summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -752,7 +806,7 @@ def test_summarise_paper_falls_back_when_pdf_response_is_malformed(mocker):
 	result = summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -768,7 +822,10 @@ def test_summarise_paper_returns_none_when_pdf_fails_and_no_abstract(mocker):
 	gemini_fn = mocker.Mock()
 
 	result = summarise_paper(
-		{'paperId': 'p1', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, conn=mocker.MagicMock(), api_key='fake-key'
+		{'paperId': 'p1', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		database_url='postgresql://x',
+		api_key='fake-key',
 	)
 
 	assert result is None
@@ -784,7 +841,7 @@ def test_summarise_paper_skips_pdf_path_when_no_api_key(mocker):
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
 	result = summarise_paper(
-		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, conn=mocker.MagicMock()
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, database_url='postgresql://x'
 	)
 
 	assert result is not None
@@ -801,7 +858,7 @@ def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
 	result = summarise_paper(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
-		conn=mocker.MagicMock(),
+		database_url='postgresql://x',
 		api_key='fake-key',
 	)
 
@@ -848,7 +905,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(side_effect=scorer.GeminiQuotaExhausted('quota'))
 	with pytest.raises(scorer.GeminiQuotaExhausted, match='quota'):
-		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, conn=mocker.MagicMock())
+		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 
 @responses.activate
@@ -866,7 +923,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 		summarise_paper(
 			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 			gemini_fn,
-			conn=mocker.MagicMock(),
+			database_url='postgresql://x',
 			api_key='fake-key',
 		)
 	gemini_fn.assert_not_called()

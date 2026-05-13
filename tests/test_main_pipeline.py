@@ -366,10 +366,10 @@ def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
 	mock_io['summarise'].assert_called_once()
 	call = mock_io['summarise'].call_args
 	assert call.args[0]['paperId'] == 'p1'
-	# Wired with the summariser-specific gemini wrapper, db connection, api_key, and
-	# the call-count recorder.
+	# Wired with summariser's gemini wrapper, database_url (summariser manages its own
+	# scoped sessions internally), api_key, and the call-count recorder.
 	assert call.args[1] is main._gemini_summarise
-	assert call.kwargs['conn'] is mock_db['conn']
+	assert call.kwargs['database_url'] == 'postgresql://fake'
 	assert call.kwargs['api_key'] == 'fake'
 	assert call.kwargs['on_gemini_call'] is main._record_gemini_call
 
@@ -415,7 +415,7 @@ def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
 def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
 	# The on_gemini_call callback fires inside summariser; simulate it firing on each
 	# summarise_paper call to confirm main accumulates the count.
-	def fake_summarise(paper, gemini_fn, conn, api_key, on_gemini_call):
+	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
 		on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
@@ -428,7 +428,7 @@ def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
 def test_live_run_warns_when_gemini_call_count_exceeds_threshold(mock_db, mock_io, mocker, capsys):
 	mocker.patch('main.GEMINI_CALL_WARN_THRESHOLD', 0)
 
-	def fake_summarise(paper, gemini_fn, conn, api_key, on_gemini_call):
+	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
 		on_gemini_call()
 
 	mock_io['summarise'].side_effect = fake_summarise
@@ -456,31 +456,19 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Default mock_io: 1 fetched, 1 needs scoring, 1 kept.
-	# Boundary count: 1 (Phase A) + 1 (C: mark_scoring_results) + 1 (D: 1 kept paper) + 1 (E: finish_run) = 4.
+	# Phase D sessions are now owned by summariser.summarise_paper (mocked here), so
+	# main opens A (init + upserts + needs_scoring) + C (mark_scoring_results) + E (finish_run) = 3.
 	main.main([])
-	assert mock_db['session'].call_count == 4
+	assert mock_db['session'].call_count == 3
 
 
-def test_main_opens_per_paper_sessions_in_summarisation_phase(mock_db, mock_io, mocker):
-	# 3 kept papers => Phase D contributes 3 sessions.
-	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
-	mock_io['score'].return_value = (
-		[{'paperId': 'p1', 'ai_score': 8}, {'paperId': 'p2', 'ai_score': 9}, {'paperId': 'p3', 'ai_score': 7}],
-		{'p1', 'p2', 'p3'},
-	)
-	main.main([])
-	# 1 (A) + 1 (C) + 3 (D) + 1 (E) = 6.
-	assert mock_db['session'].call_count == 6
-
-
-def test_main_skips_phase_c_and_d_sessions_when_nothing_needs_scoring(mock_db, mock_io):
+def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
 	# needs_scoring returns empty => new_papers=[] => Phase C skipped; scorer also
-	# receives [] so nothing is kept and Phase D is skipped too.
+	# receives [] so nothing is kept and Phase D's summariser-owned sessions don't run.
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
 	mock_io['score'].return_value = ([], set())
 	main.main([])
-	# 1 (A) + 0 (C) + 0 (D) + 1 (E) = 2.
+	# 1 (A) + 0 (C) + 1 (E) = 2.
 	assert mock_db['session'].call_count == 2
 
 
