@@ -910,3 +910,37 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 			api_key='fake-key',
 		)
 	gemini_fn.assert_not_called()
+
+
+# -- budget exhaustion (caller-owned, raised through on_gemini_call or gemini_fn) --
+
+
+def test_summarise_paper_propagates_budget_exhausted_from_abstract_path(mocker):
+	import scorer
+
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	gemini_fn = mocker.Mock(side_effect=scorer.GeminiBudgetExhausted('budget'))
+	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
+		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+
+
+def test_summarise_paper_propagates_budget_exhausted_from_pdf_path(mocker):
+	import scorer
+
+	# The PDF path's _post_with_retry fires on_attempt before each post; main wires that to a counter that raises when the budget is reached.
+	def raising_on_call():
+		raise scorer.GeminiBudgetExhausted('budget')
+
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.download_pdf', return_value=b'pdf')
+	gemini_fn = mocker.Mock()
+
+	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
+		summarise_paper(
+			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+			gemini_fn,
+			database_url='postgresql://x',
+			api_key='fake-key',
+			on_gemini_call=raising_on_call,
+		)
+	gemini_fn.assert_not_called()

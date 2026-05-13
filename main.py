@@ -11,6 +11,7 @@ import summariser
 from config import GEMINI_CALL_BUDGET, RELEVANCE_THRESHOLD, SEARCH_QUERIES
 from fetcher import FetchError, dedup_papers, fetch_papers
 from render import build_email
+from scorer import GeminiBudgetExhausted
 
 _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
 DRY_RUN = False
@@ -25,10 +26,6 @@ REQUIRED_ENV_VARS = (
 	'GMAIL_APP_PASSWORD',
 	'EMAIL_TO',
 )
-
-
-class GeminiBudgetExhausted(Exception):
-	pass
 
 
 def _fetch(query, api_key):
@@ -53,11 +50,6 @@ def _collect_papers(api_key):
 
 
 def _gemini_score(prompt, retries=3):
-	# Counter fires per attempt inside scorer.gemini's retry loop so a 429 storm trips the budget within a small multiple of the cap.
-	global GEMINI_CALL_COUNT
-
-	if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
-		raise GeminiBudgetExhausted(f'budget {GEMINI_CALL_BUDGET} reached after {GEMINI_CALL_COUNT} calls')
 	if DRY_RUN:
 		_record_gemini_call()
 		return (_FIXTURES / 'gemini_score.json').read_text()
@@ -72,7 +64,10 @@ def _gemini_summarise(prompt, retries=3):
 
 
 def _record_gemini_call():
+	# Raise per-attempt before incrementing so a 429 retry storm trips the budget on its next attempt, not three or four attempts past it.
 	global GEMINI_CALL_COUNT
+	if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
+		raise GeminiBudgetExhausted(f'budget {GEMINI_CALL_BUDGET} reached after {GEMINI_CALL_COUNT} calls')
 	GEMINI_CALL_COUNT += 1
 
 
@@ -80,14 +75,16 @@ def _summarise_kept_papers(enriched, database_url):
 	# summariser.summarise_paper manages two short DB sessions (cache check, then persist); no DB open during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
 	skipped = 0
-	for paper in enriched:
-		if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
-			skipped += 1
-			continue
+	for i, paper in enumerate(enriched):
 		try:
 			fields = summariser.summarise_paper(
 				paper, _gemini_summarise, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
 			)
+		except GeminiBudgetExhausted as e:
+			# _record_gemini_call raises this when the next attempt would exceed the cap; remaining papers are emailed without summaries.
+			skipped = len(enriched) - i
+			print(f'Budget exhausted, halting summarisation: {e}')
+			break
 		except scorer.GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting summarisation: {e}')
 			break

@@ -12,7 +12,13 @@ _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 
 
+# API-side halt: Gemini returned RESOURCE_EXHAUSTED, meaning the daily RPD or RPM quota is gone and no further calls will succeed until the window resets.
 class GeminiQuotaExhausted(Exception):
+	pass
+
+
+# Caller-side halt: our local GEMINI_CALL_COUNT has hit the configured GEMINI_CALL_BUDGET cap. Fires per-attempt so a 429 retry storm can't blow past it.
+class GeminiBudgetExhausted(Exception):
 	pass
 
 
@@ -120,6 +126,9 @@ def score_and_summarise(papers, gemini_fn):
 		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting remaining batches: {e}')
 			break
+		except GeminiBudgetExhausted as e:
+			print(f'Budget exhausted, halting remaining batches: {e}')
+			break
 		enriched.extend(chunk_enriched)
 		responded.update(chunk_responded)
 
@@ -142,7 +151,7 @@ def _score_chunk(papers, gemini_fn):
 	try:
 		response = gemini_fn(prompt)
 		results = parse_gemini_scores(response)
-	except GeminiQuotaExhausted:
+	except (GeminiQuotaExhausted, GeminiBudgetExhausted):
 		raise
 	except Exception as e:
 		print(f'Batch Gemini error: {e}')
