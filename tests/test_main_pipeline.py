@@ -59,6 +59,56 @@ def test_live_run_opens_db_initialises_schema_and_brackets_with_run_lifecycle(mo
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 1, len(SEARCH_QUERIES), 0)
 
 
+# -- visibility logging (env-divergence diagnosis) --
+
+
+def test_live_run_logs_db_target_host_at_startup(mock_db, mock_io, monkeypatch, capsys):
+	# A misconfigured DATABASE_URL secret in CI silently writes to the wrong Neon endpoint; logging the host makes the divergence visible in 5 seconds.
+	monkeypatch.setenv('DATABASE_URL', 'postgresql://user:secret@host.neon.tech:5432/neondb?sslmode=require')
+	main.main([])
+	out = capsys.readouterr().out
+	assert 'DB target: host.neon.tech:5432' in out
+	assert 'secret' not in out
+
+
+def test_live_run_does_not_log_db_credentials(mock_db, mock_io, monkeypatch, capsys):
+	monkeypatch.setenv('DATABASE_URL', 'postgresql://user:supersecretpassword@host/db')
+	main.main([])
+	assert 'supersecretpassword' not in capsys.readouterr().out
+
+
+def test_db_host_for_log_returns_unknown_when_url_lacks_credentials_block():
+	# Defensive: don't crash if someone passes a URL without an '@' marker; surface a sentinel rather than the raw URL.
+	assert main._db_host_for_log('postgresql://host/db') == '<unknown>'
+
+
+def test_live_run_logs_persisted_fetched_papers_summary(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	main.main([])
+	out = capsys.readouterr().out
+	# Operators can confirm at a glance that the upserts actually wrote and how many papers reached the scorer.
+	assert 'Persisted fetched papers: run_id=42, upserted=3, needs_scoring=3' in out
+
+
+def test_live_run_logs_recorded_scoring_attempts_summary(mock_db, mock_io, capsys):
+	main.main([])
+	out = capsys.readouterr().out
+	assert 'Recorded scoring attempts: attempted=1, responded=1' in out
+
+
+def test_live_run_logs_finalised_run_summary(mock_db, mock_io, capsys):
+	main.main([])
+	out = capsys.readouterr().out
+	assert 'Finalised run: run_id=42, papers_kept=1' in out
+
+
+def test_live_run_does_not_log_scoring_attempts_when_nothing_needs_scoring(mock_db, mock_io, capsys):
+	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
+	main.main([])
+	# The scoring-attempts line is skipped when there's nothing to mark, so the summary lines stay truthful.
+	assert 'Recorded scoring attempts' not in capsys.readouterr().out
+
+
 def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
 	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
 	main.main([])

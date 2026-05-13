@@ -28,6 +28,13 @@ REQUIRED_ENV_VARS = (
 )
 
 
+def _db_host_for_log(url):
+	# Strip credentials and trailing path/query; the host portion is the actionable signal when diagnosing env-divergence in cron logs.
+	if '@' not in url:
+		return '<unknown>'
+	return url.split('@', 1)[1].split('/', 1)[0]
+
+
 def _fetch(query, api_key):
 	if DRY_RUN:
 		return json.loads((_FIXTURES / 'papers.json').read_text())
@@ -110,6 +117,31 @@ def _send(html, paper_count):
 	emailer.send_email(html, paper_count, creds)
 
 
+def _persist_fetched_papers(database_url, unique):
+	# Schema, run row, paper upserts, needs_scoring filter in one scoped session. The summary log proves writes landed; if it's missing from the cron output, env-divergence is the first thing to check.
+	with db.session(database_url) as conn:
+		db.init_schema(conn)
+		run_id = db.start_run(conn, len(unique))
+		for p in unique:
+			db.upsert_paper(conn, p)
+		unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
+		new_papers = [p for p in unique if p['paperId'] in unscored]
+	print(f'Persisted fetched papers: run_id={run_id}, upserted={len(unique)}, needs_scoring={len(new_papers)}')
+	return run_id, new_papers
+
+
+def _record_scoring_attempts(database_url, new_papers, responded):
+	with db.session(database_url) as conn:
+		db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
+	print(f'Recorded scoring attempts: attempted={len(new_papers)}, responded={len(responded)}')
+
+
+def _finalise_run(database_url, run_id, papers_kept, queries_attempted, queries_errored):
+	with db.session(database_url) as conn:
+		db.finish_run(conn, run_id, papers_kept, queries_attempted, queries_errored)
+	print(f'Finalised run: run_id={run_id}, papers_kept={papers_kept}')
+
+
 def main(argv=None):
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
@@ -126,6 +158,7 @@ def main(argv=None):
 			sys.exit(f'{", ".join(missing)} required; set in the environment or GitHub Actions secrets.')
 		api_key = os.environ['SEMANTIC_SCHOLAR_API_KEY']
 		database_url = os.environ['DATABASE_URL']
+		print(f'DB target: {_db_host_for_log(database_url)}')
 
 	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
@@ -136,31 +169,22 @@ def main(argv=None):
 		print(f'Dropped {len(missing_id)} paper(s) without paperId (cannot persist)')
 	unique = [p for p in unique if p.get('paperId')]
 
-	# Phase A: schema, run row, paper upserts, needs_scoring filter. One scoped session.
 	if database_url is not None:
-		with db.session(database_url) as conn:
-			db.init_schema(conn)
-			run_id = db.start_run(conn, len(unique))
-			for p in unique:
-				db.upsert_paper(conn, p)
-			unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
-			new_papers = [p for p in unique if p['paperId'] in unscored]
+		run_id, new_papers = _persist_fetched_papers(database_url, unique)
 	else:
 		new_papers = unique
 
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
-	# Phase B: scoring. No DB connection held during the Gemini work.
+	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
 	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
 
-	# Phase C: record what was attempted/responded.
 	if database_url is not None and new_papers:
-		with db.session(database_url) as conn:
-			db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
+		_record_scoring_attempts(database_url, new_papers, responded)
 
-	# Phase D: per-paper summarisation, each in its own session.
+	# Per-paper summarisation. Each call manages its own short DB sessions internally.
 	_summarise_kept_papers(enriched, database_url)
 	_report_gemini_usage()
 
@@ -169,10 +193,9 @@ def main(argv=None):
 	else:
 		_send(build_email(enriched), len(enriched))
 
-	# Phase E: finish_run last so a logging failure never silently skips the email.
+	# Finalising the run last so a logging failure never silently skips the email.
 	if database_url is not None:
-		with db.session(database_url) as conn:
-			db.finish_run(conn, run_id, len(enriched), queries_attempted, queries_errored)
+		_finalise_run(database_url, run_id, len(enriched), queries_attempted, queries_errored)
 
 	if queries_attempted > 0 and queries_attempted == queries_errored:
 		sys.exit(f'All {queries_attempted} queries errored; no papers retrieved this run.')
