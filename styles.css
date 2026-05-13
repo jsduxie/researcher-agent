@@ -241,7 +241,6 @@ hr.section-divider {
 	font-size: 0.95rem;
 	line-height: 1.55;
 	color: var(--text);
-	max-width: 78ch;
 }
 
 .row-links {
@@ -266,6 +265,34 @@ hr.section-divider {
 }
 
 .row-links a:hover {
+	background: var(--accent);
+	color: var(--bg) !important;
+}
+
+.modal-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.75rem;
+	margin-left: 1.25rem;
+	margin-right: 1.25rem;
+	margin-top: 0.75rem;
+}
+
+.modal-action-link {
+	color: var(--accent) !important;
+	text-decoration: none !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	border: 1px solid var(--accent);
+	border-radius: 0 !important;
+	padding: 0.45rem 0.85rem;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+	display: inline-block;
+}
+
+.modal-action-link:hover {
 	background: var(--accent);
 	color: var(--bg) !important;
 }
@@ -319,4 +346,89 @@ button[key='page_next'] {
 	text-align: center !important;
 	justify-content: center !important;
 	padding: 0.5rem 1rem !important;
+}
+
+/* Review form: align widgets with the section body's 1.25rem inset. */
+[data-testid='stForm'] {
+	border: none !important;
+	padding: 0 !important;
+	background: transparent !important;
+}
+
+[data-testid='stForm'] [data-testid='stSlider'],
+[data-testid='stForm'] [data-testid='stTextArea'] {
+	padding-left: 1.25rem !important;
+	padding-right: 1.25rem !important;
+	margin-top: 0.5rem !important;
+}
+
+[data-testid='stForm'] [data-testid='stTextArea'] textarea {
+	background: transparent !important;
+	border: 1px solid var(--rule) !important;
+	border-radius: 0 !important;
+	color: var(--text) !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	padding: 0.5rem 0.75rem !important;
+	min-height: 3.5rem !important;
+}
+
+[data-testid='stForm'] [data-testid='stTextArea'] textarea:focus {
+	border-color: var(--accent) !important;
+	box-shadow: none !important;
+	outline: none !important;
+}
+
+[data-testid='stForm'] [data-testid='stTextArea'] textarea::placeholder {
+	color: var(--muted) !important;
+	font-style: italic;
+}
+
+[data-testid='stForm'] [data-testid='stSlider'] [role='slider'] {
+	background: var(--accent) !important;
+	border-color: var(--accent) !important;
+	box-shadow: none !important;
+}
+
+[data-testid='stForm'] [data-testid='stSlider'] [data-baseweb='slider'] div[role='presentation'] {
+	background: var(--accent) !important;
+}
+
+[data-testid='stFormSubmitButton'] {
+	padding-left: 1.25rem !important;
+	padding-top: 1rem !important;
+}
+
+/* Save Review button matches the modal title's PDF link: same outlined accent box, same monospace 0.82rem, same padding so heights align. */
+[data-testid='stFormSubmitButton'] button {
+	border: 1px solid var(--accent) !important;
+	border-radius: 0 !important;
+	color: var(--accent) !important;
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	font-weight: 400 !important;
+	line-height: 1.4 !important;
+	padding: 0.45rem 0.85rem !important;
+	background: transparent !important;
+	transition:
+		background 0.12s ease,
+		color 0.12s ease;
+}
+
+[data-testid='stFormSubmitButton'] button p {
+	font-family: var(--font-mono) !important;
+	font-size: 0.82rem !important;
+	font-weight: 400 !important;
+	line-height: 1.4 !important;
+	margin: 0 !important;
+}
+
+[data-testid='stFormSubmitButton'] button:hover {
+	background: var(--accent) !important;
+	color: var(--bg) !important;
+}
+
+/* Streamlit overlays a "Press Cmd+Enter to submit form" hint that sits on top of the textarea. Hide it inside the review form. */
+[data-testid='stForm'] [data-testid='InputInstructions'] {
+	display: none !important;
 }
