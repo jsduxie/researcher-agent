@@ -79,7 +79,11 @@ def _record_gemini_call():
 def _summarise_kept_papers(enriched, database_url):
 	# summariser.summarise_paper manages two short DB sessions (cache check, then persist); no DB open during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
+	skipped = 0
 	for paper in enriched:
+		if GEMINI_CALL_COUNT >= GEMINI_CALL_BUDGET:
+			skipped += 1
+			continue
 		try:
 			fields = summariser.summarise_paper(
 				paper, _gemini_summarise, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
@@ -89,6 +93,10 @@ def _summarise_kept_papers(enriched, database_url):
 			break
 		if fields:
 			paper.update(fields)
+	if skipped:
+		print(
+			f'Gemini budget ({GEMINI_CALL_BUDGET}) reached; {skipped} paper(s) will be emailed without full summaries'
+		)
 
 
 def _report_gemini_usage():

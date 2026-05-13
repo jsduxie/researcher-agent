@@ -516,7 +516,8 @@ def test_search_papers_returns_empty_authors_list_when_none_stored(conn):
 
 
 def test_search_papers_filters_by_query_against_title_and_abstract(conn):
-	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'Borderline classification', 'abstract': 'unrelated'})
+	# ILIKE is plain substring with case folding; no synonym handling, so p1's title must literally contain the query.
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'BPD classification', 'abstract': 'unrelated'})
 	db.upsert_paper(conn, {'paperId': 'p2', 'title': 'unrelated', 'abstract': 'discusses BPD detection'})
 	db.upsert_paper(conn, {'paperId': 'p3', 'title': 'transformers', 'abstract': 'attention is all you need'})
 	result = db.search_papers(conn, q='bpd')

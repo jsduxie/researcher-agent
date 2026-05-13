@@ -571,10 +571,16 @@ def test_gemini_score_does_not_increment_when_budget_raises(mocker, monkeypatch)
 
 
 def test_gemini_score_permits_calls_until_count_reaches_cap(mocker, monkeypatch):
-	# Budget N means exactly N successful calls before the next one is refused.
+	# Budget N means exactly N successful attempts before the next one is refused; on_attempt fires per attempt inside scorer.gemini.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mocker.patch('main.GEMINI_CALL_BUDGET', 3)
-	mocker.patch('main.scorer.gemini', return_value='ok')
+
+	def fake_gemini(*args, **kwargs):
+		if kwargs.get('on_attempt'):
+			kwargs['on_attempt']()
+		return 'ok'
+
+	mocker.patch('main.scorer.gemini', side_effect=fake_gemini)
 	main.GEMINI_CALL_COUNT = 0
 
 	main._gemini_score('p')
