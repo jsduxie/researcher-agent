@@ -176,6 +176,51 @@ def test_app_renders_summary_sections_in_modal_after_click(stub_db):
 	assert any('LIMITATIONS' in m for m in section_labels)
 
 
+def test_modal_renders_abstract_section_with_abstract_text(stub_db):
+	stub_db['search'].return_value = [_make_paper(abstract='Original abstract text from Semantic Scholar.')]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	section_blocks = [m.value for m in at.markdown if 'class="section-label"' in m.value]
+	assert any('ABSTRACT' in m for m in section_blocks)
+	body_blocks = [m.value for m in at.markdown if 'class="section-body"' in m.value]
+	assert any('Original abstract text from Semantic Scholar.' in m for m in body_blocks)
+
+
+def test_modal_renders_abstract_section_before_methodology(stub_db):
+	# Abstract is the original source material; it must appear above the first Gemini summary section so the operator reads source then summary.
+	stub_db['search'].return_value = [_make_paper(abstract='An abstract')]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	section_labels = [m.value for m in at.markdown if 'class="section-label"' in m.value]
+	abstract_idx = next(i for i, m in enumerate(section_labels) if 'ABSTRACT' in m)
+	methodology_idx = next(i for i, m in enumerate(section_labels) if 'METHODOLOGY' in m)
+	assert abstract_idx < methodology_idx
+
+
+def test_modal_omits_abstract_section_when_paper_has_no_abstract(stub_db):
+	stub_db['search'].return_value = [_make_paper(abstract=None)]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	section_labels = [m.value for m in at.markdown if 'class="section-label"' in m.value]
+	assert not any('ABSTRACT' in m for m in section_labels)
+
+
+def test_modal_omits_abstract_section_when_abstract_is_empty_string(stub_db):
+	stub_db['search'].return_value = [_make_paper(abstract='')]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
+	title_button.click().run()
+	section_labels = [m.value for m in at.markdown if 'class="section-label"' in m.value]
+	assert not any('ABSTRACT' in m for m in section_labels)
+
+
 def test_modal_renders_paper_title_and_authors(stub_db):
 	stub_db['search'].return_value = [_make_paper()]
 	stub_db['count'].return_value = 1
@@ -271,8 +316,10 @@ def test_modal_actions_row_does_not_render_when_paper_has_neither_url(stub_db):
 
 
 def test_modal_skips_missing_summary_fields(stub_db):
-	# A paper scored but never summarised (budget hit, abstract missing) still opens without crashing; only populated sections render.
-	stub_db['search'].return_value = [_make_paper(methodology=None, findings=None, relevance=None, limitations=None)]
+	# A paper scored but never summarised (budget hit, no Gemini output) still opens without crashing; no Gemini summary sections render even when the abstract does.
+	stub_db['search'].return_value = [
+		_make_paper(methodology=None, findings=None, relevance=None, limitations=None, abstract=None)
+	]
 	stub_db['count'].return_value = 1
 	at = AppTest.from_file(_APP_PATH).run()
 	(title_button,) = [b for b in at.button if b.label == 'Attention Is All You Need']
