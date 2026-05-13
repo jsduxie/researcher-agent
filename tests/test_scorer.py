@@ -109,8 +109,7 @@ def test_apply_scores_none_score_drops_paper(capsys):
 
 
 def test_apply_scores_bool_score_drops_paper(capsys):
-	# True passes isinstance(_, int) in Python; refuse it explicitly so a stray
-	# boolean from a malformed response can't be promoted to a numeric score.
+	# True passes isinstance(_, int) in Python; refuse it explicitly so a stray boolean from a malformed response can't be promoted to a numeric score.
 	papers = [{'title': 'p'}]
 	scores = [{'index': 0, 'relevance_score': True, 'relevance_reason': 'r'}]
 	enriched, _ = apply_scores(papers, scores, threshold=0)
@@ -275,8 +274,7 @@ def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 
 @responses.activate
 def test_gemini_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError
-	# messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
 	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	gemini('prompt', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
@@ -366,8 +364,7 @@ def test_apply_scores_responded_includes_below_threshold_papers():
 
 
 def test_apply_scores_responded_includes_papers_with_missing_relevance_reason():
-	# Numeric score present but relevance_reason missing; still counts as responded.
-	# Gemini gave us what it could; no point retrying.
+	# Numeric score present but relevance_reason missing; still counts as responded since Gemini gave us what it could, no point retrying.
 	papers = [{'paperId': 'p1', 'title': 'p1'}]
 	scores = [{'index': 0, 'relevance_score': 8}]
 	_, responded = apply_scores(papers, scores, threshold=6)
@@ -450,8 +447,7 @@ def test_gemini_detects_quota_exhausted_via_substring_when_body_not_json():
 
 
 def test_score_chunk_propagates_quota_exhausted_without_swallowing(mocker):
-	# _score_chunk wraps gemini_fn in a try/except; it must re-raise quota exhaustion
-	# rather than treat it as a regular per-batch error and return empty.
+	# _score_chunk wraps gemini_fn in try/except; it must re-raise quota exhaustion rather than treat it as a regular per-batch error and return empty.
 	gemini_fn = mocker.Mock(side_effect=GeminiQuotaExhausted('quota'))
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
 	with pytest.raises(GeminiQuotaExhausted, match='quota'):

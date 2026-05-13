@@ -18,8 +18,7 @@ def test_summariser_prompt_requests_all_four_fields():
 
 
 def test_summariser_prompt_formats_without_keyerror():
-	# JSON braces in the template must be escaped so str.format does not treat them
-	# as placeholders. If escaping breaks, this will raise KeyError or IndexError.
+	# JSON braces in the template must be escaped so str.format doesn't treat them as placeholders; if escaping breaks this raises KeyError or IndexError.
 	rendered = config.SUMMARISER_PROMPT.format(research_context='ctx', source_material='abc')
 	assert 'ctx' in rendered
 	assert 'abc' in rendered

@@ -21,8 +21,7 @@ def _cutoff_year(today, days_back):
 
 
 def _retry_after_seconds(response):
-	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff
-	# in that case rather than parse dates the API never sends.
+	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff rather than parse dates the API never sends.
 	header = response.headers.get('Retry-After')
 	if header is None:
 		return None

@@ -16,8 +16,7 @@ def env(monkeypatch):
 
 @pytest.fixture
 def mock_db(mocker):
-	# `db.session` is the scoped context manager used by every DB boundary in main.
-	# Default behaviour: each session yields the same mock conn.
+	# `db.session` is the scoped context manager used by every DB boundary in main. Default: each session yields the same mock conn.
 	conn = mocker.MagicMock()
 	session_cm = mocker.MagicMock()
 	session_cm.__enter__.return_value = conn
@@ -69,8 +68,7 @@ def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
 
 
 def test_live_run_only_scores_papers_needs_scoring_reports_as_unscored(mock_db, mock_io, mocker):
-	# needs_scoring is what now controls which papers reach the scorer (replaces
-	# the was_inserted filter from commit 2).
+	# needs_scoring now controls which papers reach the scorer (replaces the was_inserted filter from commit 2).
 	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: {'p1', 'p3'}
 	main.main([])
@@ -114,8 +112,7 @@ def test_live_run_sends_email_when_papers_kept(mock_db, mock_io):
 
 
 def test_live_run_sends_email_before_finishing_the_run(mock_db, mock_io):
-	# Logging is secondary to delivery; finish_run must run after _send so a logging
-	# failure can never silently swallow an email that was meant to go out.
+	# Logging is secondary to delivery; finish_run must run after _send so a logging failure can never silently swallow an email that was meant to go out.
 	call_order = []
 	mock_io['send'].side_effect = lambda *a, **kw: call_order.append('send')
 	mock_db['finish_run'].side_effect = lambda *a, **kw: call_order.append('finish_run')
@@ -154,9 +151,7 @@ def test_live_run_does_not_finish_run_when_upsert_crashes_mid_pipeline(mock_db, 
 
 
 def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, mock_io):
-	# Simulates a Gemini batch failure: scorer returns ([], set()). Papers were attempted
-	# but none responded. mark_scoring_results still records the attempts so we can see
-	# them in score_attempts. scored_at stays NULL, so a later run re-tries them.
+	# Simulates a Gemini batch failure: scorer returns ([], set()). Attempts are still recorded in score_attempts; scored_at stays NULL so a later run re-tries.
 	mock_io['score'].return_value = ([], set())
 
 	main.main([])
@@ -278,8 +273,7 @@ def test_live_run_drops_papers_without_paper_id_before_persisting(mock_db, mock_
 
 
 def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io, mocker, capsys):
-	# Edge case: all fetched papers are missing paperId. The pipeline should drop them,
-	# log, and finish cleanly without ever calling upsert.
+	# Edge case: all fetched papers are missing paperId. The pipeline drops them, logs, and finishes cleanly without ever calling upsert.
 	mocker.patch('main.fetch_papers', return_value=[{'title': 'one'}, {'title': 'two'}])
 	mock_io['score'].return_value = ([], set())
 
@@ -295,8 +289,7 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 
 
 def test_gemini_score_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
-	# Orchestration tests mock scorer.score_and_summarise wholesale; cover the live-mode
-	# branch of _gemini_score directly.
+	# Orchestration tests mock scorer.score_and_summarise wholesale; cover the live-mode branch of _gemini_score directly.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='gemini json')
 
@@ -326,8 +319,7 @@ def test_gemini_score_wrapper_increments_call_count(monkeypatch):
 
 
 def test_gemini_score_wrapper_does_not_increment_when_scorer_is_mocked(monkeypatch, mocker):
-	# When scorer.gemini is mocked, the new on_attempt callback never fires from inside
-	# the (replaced) retry loop; per-attempt firing under the real scorer.gemini is in test_scorer.py.
+	# When scorer.gemini is mocked, the new on_attempt callback never fires inside the (replaced) retry loop; real per-attempt firing is in test_scorer.py.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
 	mocker.patch('main.scorer.gemini', side_effect=Exception('boom'))
 	main.GEMINI_CALL_COUNT = 0
@@ -366,8 +358,7 @@ def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
 	mock_io['summarise'].assert_called_once()
 	call = mock_io['summarise'].call_args
 	assert call.args[0]['paperId'] == 'p1'
-	# Wired with summariser's gemini wrapper, database_url (summariser manages its own
-	# scoped sessions internally), api_key, and the call-count recorder.
+	# Wired with summariser's gemini wrapper, database_url (summariser manages its own scoped sessions), api_key, and the call-count recorder.
 	assert call.args[1] is main._gemini_summarise
 	assert call.kwargs['database_url'] == 'postgresql://fake'
 	assert call.kwargs['api_key'] == 'fake'
@@ -375,8 +366,7 @@ def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
 
 
 def test_live_run_summarises_only_papers_above_threshold(mock_db, mock_io):
-	# Scorer returns a single enriched paper; even if more papers were scored,
-	# only those that made it past the relevance filter should be summarised.
+	# Scorer returns a single enriched paper; even if more were scored, only those past the relevance filter should be summarised.
 	mock_io['score'].return_value = ([{'paperId': 'kept', 'ai_score': 8}], {'kept', 'dropped'})
 	main.main([])
 	mock_io['summarise'].assert_called_once()
@@ -391,8 +381,7 @@ def test_live_run_does_not_summarise_when_no_papers_kept(mock_db, mock_io):
 
 def test_live_run_attaches_summary_fields_to_paper(mock_db, mock_io):
 	main.main([])
-	# After summarise_paper returns the four-field dict, the paper passed to the
-	# email builder should carry those fields. Verify via the dict that was emailed.
+	# After summarise_paper returns the four-field dict, the paper passed to the email builder should carry those fields. Verify via the emailed dict.
 	emailed_paper = mock_io['summarise'].call_args.args[0]
 	assert emailed_paper['methodology'] == 'm'
 	assert emailed_paper['findings'] == 'f'
@@ -401,8 +390,7 @@ def test_live_run_attaches_summary_fields_to_paper(mock_db, mock_io):
 
 
 def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
-	# A complete summariser failure for a paper must not break the run; the email
-	# still goes out and the run still finishes.
+	# A complete summariser failure for a paper must not break the run; the email still goes out and the run still finishes.
 	mock_io['summarise'].return_value = None
 	main.main([])
 	mock_io['send'].assert_called_once()
@@ -413,8 +401,7 @@ def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
 
 
 def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
-	# The on_gemini_call callback fires inside summariser; simulate it firing on each
-	# summarise_paper call to confirm main accumulates the count.
+	# The on_gemini_call callback fires inside summariser; simulate it firing on each summarise_paper call to confirm main accumulates the count.
 	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
 		on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
@@ -446,9 +433,7 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 	# A stale counter from a prior run would cause spurious warnings on the next.
 	main.GEMINI_CALL_COUNT = 999
 	main.main([])
-	# After the run, count reflects only this run's calls (scorer is mocked so it
-	# didn't go through _gemini_score; summariser was mocked so no on_gemini_call
-	# fired). Net result: count is back to 0 plus whatever the mocks triggered.
+	# After the run, count reflects only this run's calls (scorer is mocked so _gemini_score wasn't called; summariser was mocked so on_gemini_call didn't fire).
 	assert main.GEMINI_CALL_COUNT < 999
 
 
@@ -456,15 +441,13 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Phase D sessions are now owned by summariser.summarise_paper (mocked here), so
-	# main opens A (init + upserts + needs_scoring) + C (mark_scoring_results) + E (finish_run) = 3.
+	# Phase D sessions are now owned by summariser.summarise_paper (mocked here); main opens A (init+upserts+needs_scoring) + C (mark) + E (finish) = 3.
 	main.main([])
 	assert mock_db['session'].call_count == 3
 
 
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
-	# needs_scoring returns empty => new_papers=[] => Phase C skipped; scorer also
-	# receives [] so nothing is kept and Phase D's summariser-owned sessions don't run.
+	# needs_scoring returns empty so new_papers=[] (Phase C skipped); scorer also receives [] so nothing is kept and Phase D's summariser sessions don't run.
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
 	mock_io['score'].return_value = ([], set())
 	main.main([])
@@ -473,8 +456,7 @@ def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io)
 
 
 def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
-	# Replace the default session mock with a tracker that counts active opens; snapshot
-	# the active count at the moment scorer.score_and_summarise is invoked.
+	# Replace the default session mock with a tracker that counts active opens; snapshot active count at the moment scorer.score_and_summarise is invoked.
 	from contextlib import contextmanager
 
 	active = [0]
@@ -505,8 +487,7 @@ def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
 
 
 def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
-	# Phase A succeeds; the next session open (Phase C) fails. Verifies the pipeline
-	# completes the phases it can and surfaces the failure cleanly.
+	# Phase A succeeds; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
 	from contextlib import contextmanager
 
 	import psycopg
