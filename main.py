@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import sys
-from contextlib import nullcontext
 from pathlib import Path
 
 import db
@@ -71,15 +70,14 @@ def _record_gemini_call():
 
 
 def _summarise_kept_papers(enriched, database_url):
-	# Per-paper session: closes between Gemini calls so Neon can auto-suspend.
+	# summariser.summarise_paper manages two short DB sessions internally (cache check,
+	# then persist) so the connection is closed during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
 	for paper in enriched:
-		session = db.session(database_url) if database_url is not None else nullcontext(None)
 		try:
-			with session as conn:
-				fields = summariser.summarise_paper(
-					paper, _gemini_summarise, conn=conn, api_key=api_key, on_gemini_call=_record_gemini_call
-				)
+			fields = summariser.summarise_paper(
+				paper, _gemini_summarise, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
+			)
 		except scorer.GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting summarisation: {e}')
 			break
