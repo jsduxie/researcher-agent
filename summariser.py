@@ -13,7 +13,7 @@ from config import (
 	RESEARCH_CONTEXT,
 	SUMMARISER_PROMPT,
 )
-from scorer import GeminiQuotaExhausted, _is_quota_exhausted
+from scorer import GeminiBudgetExhausted, GeminiQuotaExhausted, _is_quota_exhausted
 
 MODEL_VERSION = GEMINI_MODEL
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
@@ -70,7 +70,7 @@ def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 		prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material='See the attached PDF.')
 		response = generate_with_file(prompt, file_uri, api_key, on_attempt=on_gemini_call)
 		return parse_summary_response(response)
-	except GeminiQuotaExhausted:
+	except (GeminiQuotaExhausted, GeminiBudgetExhausted):
 		raise
 	except Exception as e:
 		print(f'PDF summariser failed for "{title}": {e}; falling back to abstract')
@@ -89,7 +89,7 @@ def _summarise_via_abstract(paper, gemini_fn):
 	try:
 		response = gemini_fn(prompt)
 		return parse_summary_response(response)
-	except GeminiQuotaExhausted:
+	except (GeminiQuotaExhausted, GeminiBudgetExhausted):
 		raise
 	except Exception as e:
 		print(f'Summariser Gemini error for "{title}": {e}')

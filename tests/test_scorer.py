@@ -5,7 +5,15 @@ import requests
 import responses
 
 import scorer
-from scorer import GeminiQuotaExhausted, _score_chunk, apply_scores, gemini, parse_gemini_scores, score_and_summarise
+from scorer import (
+	GeminiBudgetExhausted,
+	GeminiQuotaExhausted,
+	_score_chunk,
+	apply_scores,
+	gemini,
+	parse_gemini_scores,
+	score_and_summarise,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -503,3 +511,45 @@ def test_gemini_fires_on_attempt_before_quota_exhausted_raise():
 	with pytest.raises(GeminiQuotaExhausted):
 		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
 	assert len(counter) == 1
+
+
+# -- budget exhaustion (caller-owned, raised through on_attempt) --
+
+
+def test_gemini_on_attempt_raise_propagates_without_posting(no_sleep):
+	# When on_attempt raises (the path main uses to enforce its per-attempt budget cap), the iteration stops before sleeping or posting.
+	def raising_on_attempt():
+		raise GeminiBudgetExhausted('budget 0 reached after 0 calls')
+
+	with responses.RequestsMock() as rmock:
+		with pytest.raises(GeminiBudgetExhausted):
+			gemini('prompt', 'fake-key', on_attempt=raising_on_attempt)
+		assert len(rmock.calls) == 0
+	no_sleep.assert_not_called()
+
+
+def test_score_chunk_propagates_budget_exhausted_without_swallowing(mocker):
+	# _score_chunk wraps gemini_fn in a generic Exception catch; it must re-raise budget exhaustion (a halt signal) rather than treat it as a per-batch error.
+	gemini_fn = mocker.Mock(side_effect=GeminiBudgetExhausted('budget'))
+	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
+	with pytest.raises(GeminiBudgetExhausted, match='budget'):
+		_score_chunk(papers, gemini_fn)
+
+
+def test_score_and_summarise_short_circuits_on_budget_exhausted(mocker, capsys):
+	# Batch 2 of 3 raises budget exhausted; batch 3 must not be attempted, batch 1 results retained.
+	mock_chunk = mocker.patch(
+		'scorer._score_chunk',
+		side_effect=[
+			([{'paperId': 'p1', 'ai_score': 8}], {'p1'}),
+			GeminiBudgetExhausted('budget'),
+			([{'paperId': 'p3', 'ai_score': 7}], {'p3'}),
+		],
+	)
+	gemini_fn = mocker.Mock()
+	papers = [{'paperId': f'p{i}'} for i in range(scorer.BATCH_SIZE * 3)]
+	enriched, responded = score_and_summarise(papers, gemini_fn)
+	assert mock_chunk.call_count == 2
+	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
+	assert responded == {'p1'}
+	assert 'Budget exhausted' in capsys.readouterr().out
