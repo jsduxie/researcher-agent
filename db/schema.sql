@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS summary_feedback (
 	created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Migration from the thumbs (-1/+1) column used before the review UI shipped. The two
--- scales are not semantically equivalent, so no data is preserved across the change.
+-- Migration from the thumbs (-1/+1) column used before the review UI shipped; the two scales aren't semantically equivalent, so no data is preserved.
 ALTER TABLE summary_feedback ADD COLUMN IF NOT EXISTS rating INTEGER;
 ALTER TABLE summary_feedback DROP COLUMN IF EXISTS thumbs;
+
+-- Idempotently ensure the rating CHECK constraint exists; ADD COLUMN above doesn't pick up the inline CHECK on pre-existing tables.
+ALTER TABLE summary_feedback DROP CONSTRAINT IF EXISTS summary_feedback_rating_check;
+ALTER TABLE summary_feedback ADD CONSTRAINT summary_feedback_rating_check CHECK (rating BETWEEN 1 AND 5);

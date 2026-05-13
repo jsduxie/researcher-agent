@@ -199,7 +199,7 @@ def seed():
 
 	for paper in _PAPERS:
 		db.upsert_paper(conn, paper)
-		db.upsert_summary(conn, paper['paperId'], paper['summary'], 'gemini-2.5-flash')
+		db.upsert_summary(conn, paper['paperId'], paper['summary'], 'test-model-v1')
 
 	for paper_id, rating in _SEED_RATINGS:
 		db.insert_rating(conn, paper_id, rating)
