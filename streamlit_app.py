@@ -99,6 +99,16 @@ def _show_paper(paper):
 	if action_links:
 		st.markdown(f'<div class="modal-actions">{"".join(action_links)}</div>', unsafe_allow_html=True)
 
+	# Original paper abstract renders as its own section above the Gemini summary so the operator can compare them side by side. Read-only, no widgets.
+	abstract = paper.get('abstract')
+	if abstract:
+		st.markdown(
+			f'<hr class="section-divider"/>'
+			f'<div class="section-label">ABSTRACT</div>'
+			f'<div class="section-body">{abstract}</div>',
+			unsafe_allow_html=True,
+		)
+
 	paper_id = paper['paper_id']
 	conn = _get_connection()
 	latest_overall = db.get_latest_rating(conn, paper_id)
