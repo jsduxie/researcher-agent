@@ -221,9 +221,24 @@ def _inject_styles():
 	st.markdown(f'<style>{_STYLES_PATH.read_text()}</style>', unsafe_allow_html=True)
 
 
+_NAV_ITEMS = (('papers', 'streamlit_app.py'), ('history', 'pages/history.py'))
+
+
+def _render_sidebar(current):
+	# Streamlit's st.page_link consumes its active state via emotion-CSS-in-JS and doesn't expose it on the DOM, so we render the current page as a styled markdown row (carrying the accent border) and the others as real navigation links.
+	with st.sidebar:
+		for key, path in _NAV_ITEMS:
+			label = COPY['nav'][key]
+			if key == current:
+				st.markdown(f'<div class="sidebar-nav-active">{label}</div>', unsafe_allow_html=True)
+			else:
+				st.page_link(path, label=label)
+
+
 def main():
-	st.set_page_config(page_title=COPY['brand'], layout='wide', initial_sidebar_state='collapsed')
+	st.set_page_config(page_title=COPY['brand'], layout='wide', initial_sidebar_state='expanded')
 	_inject_styles()
+	_render_sidebar(current='papers')
 	st.session_state.setdefault('page', 1)
 
 	st.markdown(f'<div class="brand">{COPY["brand"]}</div>', unsafe_allow_html=True)

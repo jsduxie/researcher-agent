@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS runs (
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_attempted INTEGER;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored INTEGER;
 
+CREATE TABLE IF NOT EXISTS runs_papers (
+	run_id BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+	paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,
+	was_new BOOLEAN NOT NULL DEFAULT TRUE,
+	PRIMARY KEY (run_id, paper_id)
+);
+
+-- Idempotent migration for databases that received the table before was_new existed.
+ALTER TABLE runs_papers ADD COLUMN IF NOT EXISTS was_new BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE TABLE IF NOT EXISTS ratings (
 	id BIGSERIAL PRIMARY KEY,
 	paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,

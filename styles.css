@@ -21,13 +21,100 @@ body,
 	font-family: var(--font-display) !important;
 }
 
-[data-testid='stHeader'],
+/* The Streamlit header is left rendered so the sidebar toggle keeps working. The header itself is restyled to match the warm-dark palette; specific noise children are hidden. */
+[data-testid='stHeader'] {
+	background: var(--bg) !important;
+}
+
 #MainMenu,
 footer,
-[data-testid='stToolbar'],
-[data-testid='stStatusWidget'] {
+[data-testid='stStatusWidget'],
+[data-testid='stDeployButton'] {
 	display: none !important;
 	visibility: hidden !important;
+}
+
+/* Sidebar palette + typography. Width and layout are left to Streamlit's defaults; overriding them tends to break the show/hide logic. */
+section[data-testid='stSidebar'] {
+	background-color: var(--surface) !important;
+}
+
+section[data-testid='stSidebar'] > div {
+	background-color: var(--surface) !important;
+	border-right: 1px solid var(--rule);
+}
+
+/* Brand banner injected at the top of the sidebar so every page carries the Researcher Agent identity, regardless of the auto-generated page label below. */
+section[data-testid='stSidebar'] > div::before {
+	content: 'Researcher Agent';
+	display: block;
+	font-family: var(--font-display);
+	font-weight: 700;
+	font-size: 1.1rem;
+	letter-spacing: -0.02em;
+	color: var(--text);
+	padding: 1.25rem 1rem 0.75rem 1rem;
+	margin-bottom: 0.75rem;
+	border-bottom: 1px solid var(--accent);
+}
+
+/* Auto-generated nav uses file-derived labels ("streamlit app"); hidden in favour of explicit page_link widgets with proper labels rendered in stSidebarUserContent. */
+section[data-testid='stSidebar'] [data-testid='stSidebarNav'] {
+	display: none !important;
+}
+
+/* Pull the user-content block flush against the brand banner now that the auto-nav between them is gone. */
+section[data-testid='stSidebar'] [data-testid='stSidebarUserContent'] {
+	padding-top: 0 !important;
+	margin-top: 0 !important;
+}
+
+/* st.page_link renders an stPageLink containing an <a>; style the anchor so it reads as a nav row aligned with the brand banner's 1rem inset. */
+section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink'] {
+	font-family: var(--font-display) !important;
+	font-size: 0.95rem !important;
+	font-weight: 500 !important;
+	color: var(--muted) !important;
+	background: transparent !important;
+	border-radius: 0 !important;
+	padding: 0.6rem 1rem !important;
+	margin: 0 !important;
+	letter-spacing: 0 !important;
+	text-transform: none !important;
+	text-decoration: none !important;
+	border-left: 2px solid transparent;
+	transition:
+		color 0.12s ease,
+		border-left-color 0.12s ease;
+	display: block !important;
+}
+
+section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink']:hover {
+	color: var(--accent) !important;
+	background: transparent !important;
+	border-left-color: var(--accent-soft);
+}
+
+/* Active-row marker emitted by _render_sidebar when the current page matches. Visually identical to a page_link row but in the accent colour with the accent border-left; non-clickable because we're already on that page. */
+section[data-testid='stSidebar'] .sidebar-nav-active {
+	font-family: var(--font-display);
+	font-size: 0.95rem;
+	font-weight: 500;
+	color: var(--accent);
+	padding: 0.6rem 1rem;
+	margin: 0;
+	border-left: 2px solid var(--accent);
+}
+
+section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink'] span,
+section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink'] p {
+	font-family: inherit !important;
+	font-size: inherit !important;
+	font-weight: inherit !important;
+	letter-spacing: inherit !important;
+	text-transform: inherit !important;
+	color: inherit !important;
+	margin: 0 !important;
 }
 
 [data-testid='stMainBlockContainer'] {
@@ -328,6 +415,58 @@ hr.section-divider {
 	color: var(--muted);
 	text-align: center;
 	padding: 4rem 0;
+}
+
+.history-paper-title {
+	font-family: var(--font-display);
+	font-size: 0.95rem;
+	font-weight: 500;
+	color: var(--text);
+	margin-top: 0.75rem;
+}
+
+.history-tag {
+	display: inline-block;
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	padding: 0.1rem 0.4rem;
+	margin-right: 0.6rem;
+	border: 1px solid currentColor;
+	vertical-align: middle;
+}
+
+.history-tag-new {
+	color: var(--accent);
+}
+
+.history-tag-repeat {
+	color: var(--muted);
+}
+
+.history-paper-meta {
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	color: var(--muted);
+	margin-bottom: 0.25rem;
+}
+
+[data-testid='stExpander'] details {
+	background: transparent !important;
+	border: 1px solid var(--rule) !important;
+	border-radius: 0 !important;
+	margin-bottom: 0.5rem;
+}
+
+[data-testid='stExpander'] details summary {
+	font-family: var(--font-mono) !important;
+	font-size: 0.85rem !important;
+	color: var(--text) !important;
+}
+
+[data-testid='stExpander'] details summary:hover {
+	color: var(--accent) !important;
 }
 
 .page-status {

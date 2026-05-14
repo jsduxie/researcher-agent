@@ -1,5 +1,9 @@
 brand: Researcher Agent
 empty_state: No papers match.
+
+nav:
+  papers: 'Papers'
+  history: 'History'
 search_placeholder: search title or abstract
 labels:
   search: Search
@@ -38,3 +42,15 @@ review:
   correction_label: 'Correction'
   correction_placeholder: 'optional note or rewrite'
   submit: 'Save review'
+
+history:
+  page_title: 'Run history'
+  empty_runs: 'No runs recorded yet.'
+  empty_run_papers: 'No papers recorded for this run.'
+  fetched_label: 'fetched'
+  kept_label: 'kept'
+  queries_label: 'queries'
+  errored_label: 'errored'
+  in_progress: 'in progress'
+  tag_new: 'new'
+  tag_repeat: 'repeat'

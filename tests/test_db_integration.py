@@ -612,3 +612,138 @@ def test_list_runs_respects_limit(conn):
 	for _ in range(5):
 		db.start_run(conn, papers_fetched=0)
 	assert len(db.list_runs(conn, limit=3)) == 3
+
+
+# -- runs_papers / list_papers_for_run --
+
+
+def _upsert_paper_minimal(conn, paper_id, title='t'):
+	db.upsert_paper(conn, {'paperId': paper_id, 'title': title})
+
+
+def test_record_run_papers_attaches_papers_to_run(conn):
+	_upsert_paper_minimal(conn, 'p1')
+	_upsert_paper_minimal(conn, 'p2')
+	run_id = db.start_run(conn, papers_fetched=2)
+
+	db.record_run_papers(conn, run_id, [('p1', True), ('p2', True)])
+
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id FROM runs_papers WHERE run_id = %s ORDER BY paper_id', (run_id,))
+		assert [row[0] for row in cur.fetchall()] == ['p1', 'p2']
+
+
+def test_record_run_papers_persists_the_was_new_flag(conn):
+	_upsert_paper_minimal(conn, 'fresh')
+	_upsert_paper_minimal(conn, 'repeat')
+	run_id = db.start_run(conn, papers_fetched=2)
+
+	db.record_run_papers(conn, run_id, [('fresh', True), ('repeat', False)])
+
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id, was_new FROM runs_papers WHERE run_id = %s ORDER BY paper_id', (run_id,))
+		assert cur.fetchall() == [('fresh', True), ('repeat', False)]
+
+
+def test_record_run_papers_is_idempotent_within_a_run(conn):
+	# Re-recording the same (run_id, paper_id) is a no-op; the PK + ON CONFLICT DO NOTHING absorbs duplicates from a retried run that crashed mid-write.
+	_upsert_paper_minimal(conn, 'p1')
+	run_id = db.start_run(conn, papers_fetched=1)
+
+	db.record_run_papers(conn, run_id, [('p1', True)])
+	db.record_run_papers(conn, run_id, [('p1', True)])
+
+	with conn.cursor() as cur:
+		cur.execute('SELECT COUNT(*) FROM runs_papers WHERE run_id = %s AND paper_id = %s', (run_id, 'p1'))
+		assert cur.fetchone()[0] == 1
+
+
+def test_record_run_papers_no_ops_on_empty_input(conn):
+	run_id = db.start_run(conn, papers_fetched=0)
+	db.record_run_papers(conn, run_id, [])
+	with conn.cursor() as cur:
+		cur.execute('SELECT COUNT(*) FROM runs_papers WHERE run_id = %s', (run_id,))
+		assert cur.fetchone()[0] == 0
+
+
+def test_record_run_papers_supports_same_paper_appearing_in_multiple_runs(conn):
+	# A paper re-encountered in a later run must show up under both runs' rosters with was_new=False, which is the whole reason this commit picked a join table over the fetched_at window.
+	_upsert_paper_minimal(conn, 'p1')
+	run_a = db.start_run(conn, papers_fetched=1)
+	run_b = db.start_run(conn, papers_fetched=1)
+
+	db.record_run_papers(conn, run_a, [('p1', True)])
+	db.record_run_papers(conn, run_b, [('p1', False)])
+
+	with conn.cursor() as cur:
+		cur.execute('SELECT run_id, was_new FROM runs_papers WHERE paper_id = %s ORDER BY run_id', ('p1',))
+		assert cur.fetchall() == [(run_a, True), (run_b, False)]
+
+
+def test_list_papers_for_run_returns_only_rosters_papers(conn):
+	_upsert_paper_minimal(conn, 'in-run', title='Kept')
+	_upsert_paper_minimal(conn, 'not-in-run', title='Skipped')
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_papers(conn, run_id, [('in-run', True)])
+
+	papers = db.list_papers_for_run(conn, run_id)
+
+	assert [p['paper_id'] for p in papers] == ['in-run']
+
+
+def test_list_papers_for_run_returns_empty_list_when_run_has_no_roster(conn):
+	# Historical pre-migration runs and any future run that crashed before recording its roster both surface as empty here; History page renders an empty-state message.
+	run_id = db.start_run(conn, papers_fetched=0)
+	assert db.list_papers_for_run(conn, run_id) == []
+
+
+def test_list_papers_for_run_returns_rich_paper_shape_for_dashboard(conn):
+	# History page reuses the dashboard's modal renderer; the shape returned here must match what search_papers returns so the modal works without branching.
+	_upsert_paper_minimal(conn, 'p1', title='Paper One')
+	db.upsert_summary(conn, 'p1', {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}, 'v1')
+	db.insert_rating(conn, 'p1', 4)
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_papers(conn, run_id, [('p1', True)])
+
+	(paper,) = db.list_papers_for_run(conn, run_id)
+
+	assert paper['title'] == 'Paper One'
+	assert paper['methodology'] == 'm'
+	assert paper['latest_rating'] == 4
+	assert paper['was_new'] is True
+
+
+def test_list_papers_for_run_returns_was_new_flag_from_join_row(conn):
+	_upsert_paper_minimal(conn, 'fresh')
+	_upsert_paper_minimal(conn, 'repeat')
+	run_id = db.start_run(conn, papers_fetched=2)
+	db.record_run_papers(conn, run_id, [('fresh', True), ('repeat', False)])
+
+	papers = db.list_papers_for_run(conn, run_id)
+
+	by_id = {p['paper_id']: p['was_new'] for p in papers}
+	assert by_id == {'fresh': True, 'repeat': False}
+
+
+def test_truncating_run_cascades_to_runs_papers(conn):
+	# ON DELETE CASCADE on the runs(id) FK keeps the roster aligned with the runs table when a run row is removed.
+	_upsert_paper_minimal(conn, 'p1')
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_papers(conn, run_id, [('p1', True)])
+
+	with conn.cursor() as cur:
+		cur.execute('DELETE FROM runs WHERE id = %s', (run_id,))
+		cur.execute('SELECT COUNT(*) FROM runs_papers WHERE run_id = %s', (run_id,))
+		assert cur.fetchone()[0] == 0
+
+
+def test_deleting_paper_cascades_to_runs_papers(conn):
+	# Symmetric to the runs cascade; orphan roster entries shouldn't survive a paper deletion.
+	_upsert_paper_minimal(conn, 'p1')
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_papers(conn, run_id, [('p1', True)])
+
+	with conn.cursor() as cur:
+		cur.execute('DELETE FROM papers WHERE paper_id = %s', ('p1',))
+		cur.execute('SELECT COUNT(*) FROM runs_papers WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone()[0] == 0

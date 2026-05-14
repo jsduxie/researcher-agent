@@ -118,13 +118,14 @@ def _send(html, paper_count):
 
 
 def _persist_fetched_papers(database_url, unique):
-	# Schema, run row, paper upserts, needs_scoring filter in one scoped session. The summary log proves writes landed; if it's missing from the cron output, env-divergence is the first thing to check.
+	# Schema, run row, paper upserts, runs_papers roster (with was_new flag), needs_scoring filter in one scoped session. The summary log proves writes landed; if it's missing from the cron output, env-divergence is the first thing to check.
+	paper_ids = [p['paperId'] for p in unique]
 	with db.session(database_url) as conn:
 		db.init_schema(conn)
 		run_id = db.start_run(conn, len(unique))
-		for p in unique:
-			db.upsert_paper(conn, p)
-		unscored = db.needs_scoring(conn, [p['paperId'] for p in unique])
+		roster = [(p['paperId'], db.upsert_paper(conn, p)) for p in unique]
+		db.record_run_papers(conn, run_id, roster)
+		unscored = db.needs_scoring(conn, paper_ids)
 		new_papers = [p for p in unique if p['paperId'] in unscored]
 	print(f'Persisted fetched papers: run_id={run_id}, upserted={len(unique)}, needs_scoring={len(new_papers)}')
 	return run_id, new_papers
