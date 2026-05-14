@@ -280,6 +280,36 @@ _LIST_RUNS_COLUMNS = (
 	'queries_errored',
 )
 
+_LIST_PAPERS_FOR_RUN_COLUMNS = (*_SEARCH_PAPERS_COLUMNS, 'was_new')
+
+_LIST_PAPERS_FOR_RUN_SQL = """
+SELECT
+	papers.paper_id,
+	papers.title,
+	papers.abstract,
+	papers.year,
+	papers.citation_count,
+	papers.url,
+	papers.doi,
+	papers.pdf_url,
+	papers.fetched_at,
+	COALESCE(
+		(SELECT array_agg(name ORDER BY position) FROM paper_authors WHERE paper_id = papers.paper_id),
+		ARRAY[]::TEXT[]
+	) AS authors,
+	summaries.methodology,
+	summaries.findings,
+	summaries.relevance,
+	summaries.limitations,
+	(SELECT rating FROM ratings WHERE paper_id = papers.paper_id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_rating,
+	runs_papers.was_new
+FROM papers
+JOIN runs_papers ON runs_papers.paper_id = papers.paper_id
+LEFT JOIN summaries ON papers.paper_id = summaries.paper_id
+WHERE runs_papers.run_id = %s
+ORDER BY papers.fetched_at DESC
+"""
+
 
 def _build_search_filters(q, date_range):
 	since, until = date_range if date_range else DateRange()
@@ -328,3 +358,22 @@ def list_runs(conn, limit=50):
 		)
 		rows = cur.fetchall()
 	return [dict(zip(_LIST_RUNS_COLUMNS, row, strict=True)) for row in rows]
+
+
+@database_reconnect
+def record_run_papers(conn, run_id, entries):
+	# entries is an iterable of (paper_id, was_new) pairs. was_new comes from upsert_paper's RETURNING (xmax = 0) check so the History page can distinguish fresh fetches from re-encounters.
+	rows = [(run_id, paper_id, was_new) for paper_id, was_new in entries]
+	if not rows:
+		return
+	with conn.transaction(), conn.cursor() as cur:
+		cur.executemany(
+			'INSERT INTO runs_papers (run_id, paper_id, was_new) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING', rows
+		)
+
+
+def list_papers_for_run(conn, run_id):
+	with conn.cursor() as cur:
+		cur.execute(_LIST_PAPERS_FOR_RUN_SQL, (run_id,))
+		rows = cur.fetchall()
+	return [dict(zip(_LIST_PAPERS_FOR_RUN_COLUMNS, row, strict=True)) for row in rows]

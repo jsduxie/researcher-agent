@@ -840,3 +840,81 @@ def test_list_runs_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
 	with pytest.raises(RuntimeError, match='select boom'):
 		db.list_runs(mock_conn)
+
+
+# -- record_run_papers --
+
+
+def test_record_run_papers_inserts_one_row_per_entry_with_was_new_flag(mock_conn):
+	db.record_run_papers(mock_conn, 42, [('p1', True), ('p2', False), ('p3', True)])
+	call = _cursor(mock_conn).executemany.call_args
+	assert 'INSERT INTO runs_papers' in call.args[0]
+	assert 'was_new' in call.args[0]
+	assert 'ON CONFLICT DO NOTHING' in call.args[0]
+	assert call.args[1] == [(42, 'p1', True), (42, 'p2', False), (42, 'p3', True)]
+
+
+def test_record_run_papers_no_ops_on_empty_input(mock_conn):
+	db.record_run_papers(mock_conn, 42, [])
+	_cursor(mock_conn).executemany.assert_not_called()
+
+
+def test_record_run_papers_propagates_database_error(mock_conn):
+	_cursor(mock_conn).executemany.side_effect = RuntimeError('insert boom')
+	with pytest.raises(RuntimeError, match='insert boom'):
+		db.record_run_papers(mock_conn, 42, [('p1', True)])
+
+
+# -- list_papers_for_run --
+
+
+def test_list_papers_for_run_filters_by_run_id_via_join(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.list_papers_for_run(mock_conn, 42)
+	call = _cursor(mock_conn).execute.call_args
+	assert 'JOIN runs_papers' in call.args[0]
+	assert 'WHERE runs_papers.run_id = %s' in call.args[0]
+	assert call.args[1] == (42,)
+
+
+def test_list_papers_for_run_returns_list_of_dicts_with_expected_columns(mock_conn):
+	from datetime import datetime
+
+	_cursor(mock_conn).fetchall.return_value = [
+		(
+			'p1',
+			'title',
+			'abstract',
+			2024,
+			10,
+			'https://x/p1',
+			'10.1/p1',
+			'https://x/p1.pdf',
+			datetime(2026, 5, 1),
+			['Author One'],
+			'methodology text',
+			'findings text',
+			'relevance text',
+			'limitations text',
+			4,
+			True,
+		)
+	]
+	result = db.list_papers_for_run(mock_conn, 42)
+	assert len(result) == 1
+	assert result[0]['paper_id'] == 'p1'
+	assert result[0]['authors'] == ['Author One']
+	assert result[0]['latest_rating'] == 4
+	assert result[0]['methodology'] == 'methodology text'
+	assert result[0]['was_new'] is True
+
+
+def test_list_papers_for_run_returns_empty_list_when_run_has_no_papers(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.list_papers_for_run(mock_conn, 42) == []
+
+
+def test_list_papers_for_run_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.list_papers_for_run(mock_conn, 42)

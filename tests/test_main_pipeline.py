@@ -27,7 +27,8 @@ def mock_db(mocker):
 		'session': mocker.patch('main.db.session', return_value=session_cm),
 		'init_schema': mocker.patch('main.db.init_schema'),
 		'start_run': mocker.patch('main.db.start_run', return_value=42),
-		'upsert_paper': mocker.patch('main.db.upsert_paper'),
+		'upsert_paper': mocker.patch('main.db.upsert_paper', return_value=True),
+		'record_run_papers': mocker.patch('main.db.record_run_papers'),
 		'needs_scoring': mocker.patch('main.db.needs_scoring', side_effect=lambda conn, ids: set(ids)),
 		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
@@ -115,6 +116,34 @@ def test_live_run_upserts_every_unique_paper(mock_db, mock_io, mocker):
 	assert mock_db['upsert_paper'].call_count == 3
 	upserted = [c.args[1]['paperId'] for c in mock_db['upsert_paper'].call_args_list]
 	assert upserted == ['p1', 'p2', 'p3']
+
+
+def test_live_run_records_run_to_paper_roster_once_per_run(mock_db, mock_io, mocker):
+	# runs_papers gives each run a precise paper roster so the History page can show "which papers belonged to this run" without an inferred fetched_at window.
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	main.main([])
+	mock_db['record_run_papers'].assert_called_once()
+	call = mock_db['record_run_papers'].call_args
+	assert call.args[1] == 42
+	assert sorted(call.args[2]) == [('p1', True), ('p2', True), ('p3', True)]
+
+
+def test_live_run_marks_returning_papers_as_repeats_in_the_roster(mock_db, mock_io, mocker):
+	# upsert_paper returns False on conflict (paper was already in the table). The history roster carries that through so re-encountered papers are tagged "repeat".
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'fresh'}, {'paperId': 'repeat'}])
+	mock_db['upsert_paper'].side_effect = [True, False]
+	main.main([])
+	entries = mock_db['record_run_papers'].call_args.args[2]
+	assert sorted(entries) == [('fresh', True), ('repeat', False)]
+
+
+def test_live_run_skips_run_paper_roster_when_no_papers_have_paper_id(mock_db, mock_io, mocker, capsys):
+	# Papers without paperId are dropped before Phase A; record_run_papers still runs with an empty list, which db.record_run_papers no-ops on.
+	mocker.patch('main.fetch_papers', return_value=[{'title': 'no id'}])
+	main.main([])
+	mock_db['record_run_papers'].assert_called_once()
+	assert mock_db['record_run_papers'].call_args.args[2] == []
+	assert 'Dropped 1 paper(s) without paperId' in capsys.readouterr().out
 
 
 def test_live_run_only_scores_papers_needs_scoring_reports_as_unscored(mock_db, mock_io, mocker):
