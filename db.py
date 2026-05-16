@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 
 class DateRange(NamedTuple):
@@ -187,11 +188,13 @@ def mark_scoring_results(conn, attempted, responded):
 # -- review writes (append-only event log; readers select the latest row) --
 
 
+@database_reconnect
 def insert_rating(conn, paper_id, rating):
 	with conn.cursor() as cur:
 		cur.execute('INSERT INTO ratings (paper_id, rating) VALUES (%s, %s)', (paper_id, rating))
 
 
+@database_reconnect
 def insert_summary_feedback(conn, paper_id, field, rating=None, correction=None):
 	with conn.cursor() as cur:
 		cur.execute(
@@ -377,3 +380,58 @@ def list_papers_for_run(conn, run_id):
 		cur.execute(_LIST_PAPERS_FOR_RUN_SQL, (run_id,))
 		rows = cur.fetchall()
 	return [dict(zip(_LIST_PAPERS_FOR_RUN_COLUMNS, row, strict=True)) for row in rows]
+
+
+# -- app config (per-key JSONB) + audit history --
+
+
+_LIST_CONFIG_HISTORY_COLUMNS = ('id', 'key', 'value', 'changed_at', 'changed_by')
+
+_UPSERT_APP_CONFIG_SQL = """
+INSERT INTO app_config (key, value, updated_at, updated_by)
+VALUES (%s, %s, NOW(), %s)
+ON CONFLICT (key) DO UPDATE
+SET value = EXCLUDED.value,
+    updated_at = NOW(),
+    updated_by = EXCLUDED.updated_by
+"""
+
+_INSERT_APP_CONFIG_HISTORY_SQL = (
+	'INSERT INTO app_config_history (key, value, changed_at, changed_by) VALUES (%s, %s, NOW(), %s)'
+)
+
+
+def load_config(conn):
+	with conn.cursor() as cur:
+		cur.execute('SELECT key, value FROM app_config')
+		return dict(cur.fetchall())
+
+
+@database_reconnect
+def update_config(conn, updates, by=None):
+	# Upserts every key and appends one history row per key in a single transaction so the audit log cannot drift from app_config.
+	if not updates:
+		return
+	with conn.transaction(), conn.cursor() as cur:
+		for key, value in updates.items():
+			payload = Jsonb(value)
+			cur.execute(_UPSERT_APP_CONFIG_SQL, (key, payload, by))
+			cur.execute(_INSERT_APP_CONFIG_HISTORY_SQL, (key, payload, by))
+
+
+def list_config_history(conn, key=None, limit=20):
+	with conn.cursor() as cur:
+		if key is None:
+			cur.execute(
+				'SELECT id, key, value, changed_at, changed_by FROM app_config_history '
+				'ORDER BY changed_at DESC, id DESC LIMIT %s',
+				(limit,),
+			)
+		else:
+			cur.execute(
+				'SELECT id, key, value, changed_at, changed_by FROM app_config_history '
+				'WHERE key = %s ORDER BY changed_at DESC, id DESC LIMIT %s',
+				(key, limit),
+			)
+		rows = cur.fetchall()
+	return [dict(zip(_LIST_CONFIG_HISTORY_COLUMNS, row, strict=True)) for row in rows]
