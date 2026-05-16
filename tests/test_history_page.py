@@ -24,6 +24,12 @@ def _clear_streamlit_caches():
 	st.cache_resource.clear()
 
 
+@pytest.fixture(autouse=True)
+def _stub_page_link(mocker):
+	# AppTest doesn't populate the multipage page registry, so st.page_link raises KeyError('url_pathname'). The sidebar nav rows are not the subject of these tests, so no-op them.
+	mocker.patch('streamlit.page_link')
+
+
 @pytest.fixture
 def stub_db(mocker):
 	mocker.patch('db.connect', return_value=mocker.MagicMock())
