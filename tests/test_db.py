@@ -96,6 +96,14 @@ def test_init_schema_includes_summary_feedback_thumbs_to_rating_migration(mock_c
 	assert 'ALTER TABLE summary_feedback DROP COLUMN IF EXISTS thumbs' in executed_sql
 
 
+def test_init_schema_includes_app_config_and_history_tables(mock_conn):
+	db.init_schema(mock_conn)
+	executed_sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'CREATE TABLE IF NOT EXISTS app_config' in executed_sql
+	assert 'CREATE TABLE IF NOT EXISTS app_config_history' in executed_sql
+	assert 'CREATE INDEX IF NOT EXISTS app_config_history_changed_at_idx' in executed_sql
+
+
 # -- upsert_paper --
 
 
@@ -581,6 +589,20 @@ def test_mark_scoring_results_retries_on_operational_error(mock_conn, mocker):
 	mock_connect.assert_called_once()
 
 
+def test_insert_rating_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.insert_rating(mock_conn, 'abc', 4)
+	_cursor(fresh_conn).execute.assert_called_once()
+	mock_connect.assert_called_once()
+
+
+def test_insert_summary_feedback_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.insert_summary_feedback(mock_conn, 'abc', 'methodology', rating=4)
+	_cursor(fresh_conn).execute.assert_called_once()
+	mock_connect.assert_called_once()
+
+
 # -- insert_rating --
 
 
@@ -918,3 +940,142 @@ def test_list_papers_for_run_propagates_database_error(mock_conn):
 	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
 	with pytest.raises(RuntimeError, match='select boom'):
 		db.list_papers_for_run(mock_conn, 42)
+
+
+# -- load_config --
+
+
+def test_load_config_returns_dict_of_key_to_value(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [('relevance_threshold', 6), ('search_queries', ['a', 'b'])]
+	assert db.load_config(mock_conn) == {'relevance_threshold': 6, 'search_queries': ['a', 'b']}
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'SELECT key, value FROM app_config' in sql
+
+
+def test_load_config_returns_empty_dict_when_no_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.load_config(mock_conn) == {}
+
+
+def test_load_config_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.load_config(mock_conn)
+
+
+# -- update_config --
+
+
+def test_update_config_no_op_when_updates_empty(mock_conn):
+	db.update_config(mock_conn, {})
+	_cursor(mock_conn).execute.assert_not_called()
+	mock_conn.transaction.assert_not_called()
+
+
+def test_update_config_writes_both_tables_for_each_key(mock_conn):
+	db.update_config(mock_conn, {'days_back': 14, 'relevance_threshold': 6})
+	calls = _cursor(mock_conn).execute.call_args_list
+	# Two keys, each producing an upsert plus a history append, gives 4 cursor calls.
+	assert len(calls) == 4
+	assert 'INSERT INTO app_config' in calls[0].args[0]
+	assert 'ON CONFLICT (key) DO UPDATE' in calls[0].args[0]
+	assert 'INSERT INTO app_config_history' in calls[1].args[0]
+	assert 'INSERT INTO app_config' in calls[2].args[0]
+	assert 'INSERT INTO app_config_history' in calls[3].args[0]
+
+
+def test_update_config_wraps_in_a_single_transaction(mock_conn):
+	db.update_config(mock_conn, {'days_back': 14, 'relevance_threshold': 6})
+	mock_conn.transaction.assert_called_once()
+
+
+def test_update_config_wraps_values_in_jsonb(mock_conn):
+	from psycopg.types.json import Jsonb
+
+	db.update_config(mock_conn, {'search_queries': ['x', 'y']})
+	calls = _cursor(mock_conn).execute.call_args_list
+	upsert_value = calls[0].args[1][1]
+	history_value = calls[1].args[1][1]
+	assert isinstance(upsert_value, Jsonb)
+	assert isinstance(history_value, Jsonb)
+	assert upsert_value.obj == ['x', 'y']
+	assert history_value.obj == ['x', 'y']
+
+
+def test_update_config_threads_by_to_both_inserts(mock_conn):
+	db.update_config(mock_conn, {'days_back': 14}, by='alice')
+	calls = _cursor(mock_conn).execute.call_args_list
+	# (key, value, by) for upsert; (key, value, by) for history insert.
+	assert calls[0].args[1][0] == 'days_back'
+	assert calls[0].args[1][2] == 'alice'
+	assert calls[1].args[1][0] == 'days_back'
+	assert calls[1].args[1][2] == 'alice'
+
+
+def test_update_config_defaults_by_to_none(mock_conn):
+	db.update_config(mock_conn, {'days_back': 14})
+	calls = _cursor(mock_conn).execute.call_args_list
+	assert calls[0].args[1][2] is None
+	assert calls[1].args[1][2] is None
+
+
+def test_update_config_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('write boom')
+	with pytest.raises(RuntimeError, match='write boom'):
+		db.update_config(mock_conn, {'days_back': 14})
+
+
+def test_update_config_retries_on_operational_error(mock_conn, mocker):
+	fresh_conn, mock_connect = _setup_reconnect(mock_conn, mocker)
+	db.update_config(mock_conn, {'days_back': 14})
+	# Two executes on the fresh conn: upsert + history append.
+	assert _cursor(fresh_conn).execute.call_count == 2
+	mock_connect.assert_called_once()
+
+
+# -- list_config_history --
+
+
+def test_list_config_history_unfiltered_orders_by_changed_at_desc(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.list_config_history(mock_conn)
+	call = _cursor(mock_conn).execute.call_args
+	sql = call.args[0]
+	assert 'FROM app_config_history' in sql
+	assert 'ORDER BY changed_at DESC, id DESC' in sql
+	assert 'WHERE key' not in sql
+	assert call.args[1] == (20,)
+
+
+def test_list_config_history_with_key_adds_where_clause(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.list_config_history(mock_conn, key='days_back', limit=5)
+	call = _cursor(mock_conn).execute.call_args
+	sql = call.args[0]
+	assert 'WHERE key = %s' in sql
+	assert call.args[1] == ('days_back', 5)
+
+
+def test_list_config_history_returns_list_of_dicts_with_expected_columns(mock_conn):
+	from datetime import datetime
+
+	_cursor(mock_conn).fetchall.return_value = [
+		(2, 'days_back', 14, datetime(2026, 5, 16), 'alice'),
+		(1, 'relevance_threshold', 6, datetime(2026, 5, 15), None),
+	]
+	result = db.list_config_history(mock_conn)
+	assert result == [
+		{'id': 2, 'key': 'days_back', 'value': 14, 'changed_at': datetime(2026, 5, 16), 'changed_by': 'alice'},
+		{'id': 1, 'key': 'relevance_threshold', 'value': 6, 'changed_at': datetime(2026, 5, 15), 'changed_by': None},
+	]
+
+
+def test_list_config_history_returns_empty_list_when_no_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.list_config_history(mock_conn) == []
+
+
+def test_list_config_history_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.list_config_history(mock_conn)

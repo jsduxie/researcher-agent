@@ -23,7 +23,8 @@ def conn():
 		db.init_schema(c)
 		with c.cursor() as cur:
 			cur.execute(
-				'TRUNCATE TABLE summary_feedback, ratings, summaries, paper_authors, runs, papers RESTART IDENTITY CASCADE'
+				'TRUNCATE TABLE summary_feedback, ratings, summaries, paper_authors, runs, papers, '
+				'app_config_history, app_config RESTART IDENTITY CASCADE'
 			)
 		yield c
 	finally:
@@ -746,4 +747,92 @@ def test_deleting_paper_cascades_to_runs_papers(conn):
 	with conn.cursor() as cur:
 		cur.execute('DELETE FROM papers WHERE paper_id = %s', ('p1',))
 		cur.execute('SELECT COUNT(*) FROM runs_papers WHERE paper_id = %s', ('p1',))
+		assert cur.fetchone()[0] == 0
+
+
+# -- app_config (per-key JSONB) + audit history --
+
+
+def test_load_config_returns_empty_dict_when_table_empty(conn):
+	assert db.load_config(conn) == {}
+
+
+def test_update_config_round_trips_a_single_key(conn):
+	db.update_config(conn, {'days_back': 14})
+	assert db.load_config(conn) == {'days_back': 14}
+
+
+def test_update_config_preserves_jsonb_types_across_keys(conn):
+	updates = {'search_queries': ['a', 'b', 'c'], 'relevance_threshold': 6, 'research_context': 'multi\nline\ntext'}
+	db.update_config(conn, updates)
+	assert db.load_config(conn) == updates
+
+
+def test_update_config_replaces_value_for_existing_key(conn):
+	db.update_config(conn, {'days_back': 7})
+	db.update_config(conn, {'days_back': 14})
+	assert db.load_config(conn) == {'days_back': 14}
+
+
+def test_update_config_persists_updated_by_when_provided(conn):
+	db.update_config(conn, {'days_back': 14}, by='alice')
+	with conn.cursor() as cur:
+		cur.execute('SELECT updated_by FROM app_config WHERE key = %s', ('days_back',))
+		assert cur.fetchone()[0] == 'alice'
+
+
+def test_update_config_persists_updated_by_as_null_by_default(conn):
+	db.update_config(conn, {'days_back': 14})
+	with conn.cursor() as cur:
+		cur.execute('SELECT updated_by FROM app_config WHERE key = %s', ('days_back',))
+		assert cur.fetchone()[0] is None
+
+
+def test_update_config_appends_history_on_every_write_including_overwrite(conn):
+	# Two writes to the same key produce two history rows; the audit log is append-only.
+	db.update_config(conn, {'days_back': 7})
+	db.update_config(conn, {'days_back': 14})
+	history = db.list_config_history(conn, key='days_back')
+	assert [row['value'] for row in history] == [14, 7]
+
+
+def test_update_config_appends_one_history_row_per_key_per_write(conn):
+	db.update_config(conn, {'days_back': 7, 'relevance_threshold': 6})
+	history = db.list_config_history(conn)
+	assert sorted(row['key'] for row in history) == ['days_back', 'relevance_threshold']
+
+
+def test_list_config_history_orders_newest_first(conn):
+	db.update_config(conn, {'days_back': 7})
+	db.update_config(conn, {'days_back': 14})
+	db.update_config(conn, {'days_back': 21})
+	history = db.list_config_history(conn, key='days_back')
+	assert [row['value'] for row in history] == [21, 14, 7]
+
+
+def test_list_config_history_filters_by_key(conn):
+	db.update_config(conn, {'days_back': 7})
+	db.update_config(conn, {'relevance_threshold': 6})
+	history = db.list_config_history(conn, key='days_back')
+	assert [row['key'] for row in history] == ['days_back']
+
+
+def test_list_config_history_respects_limit(conn):
+	for i in range(5):
+		db.update_config(conn, {'days_back': i})
+	assert len(db.list_config_history(conn, key='days_back', limit=3)) == 3
+
+
+def test_list_config_history_records_changed_by(conn):
+	db.update_config(conn, {'days_back': 14}, by='alice')
+	(row,) = db.list_config_history(conn, key='days_back')
+	assert row['changed_by'] == 'alice'
+
+
+def test_update_config_no_op_does_not_touch_either_table(conn):
+	db.update_config(conn, {})
+	with conn.cursor() as cur:
+		cur.execute('SELECT COUNT(*) FROM app_config')
+		assert cur.fetchone()[0] == 0
+		cur.execute('SELECT COUNT(*) FROM app_config_history')
 		assert cur.fetchone()[0] == 0

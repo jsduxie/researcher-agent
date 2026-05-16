@@ -85,3 +85,20 @@ ALTER TABLE summary_feedback DROP COLUMN IF EXISTS thumbs;
 -- Idempotently ensure the rating CHECK constraint exists; ADD COLUMN above doesn't pick up the inline CHECK on pre-existing tables.
 ALTER TABLE summary_feedback DROP CONSTRAINT IF EXISTS summary_feedback_rating_check;
 ALTER TABLE summary_feedback ADD CONSTRAINT summary_feedback_rating_check CHECK (rating BETWEEN 1 AND 5);
+
+CREATE TABLE IF NOT EXISTS app_config (
+	key TEXT PRIMARY KEY,
+	value JSONB NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	updated_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS app_config_history (
+	id BIGSERIAL PRIMARY KEY,
+	key TEXT NOT NULL,
+	value JSONB NOT NULL,
+	changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+	changed_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS app_config_history_changed_at_idx ON app_config_history (changed_at DESC);
