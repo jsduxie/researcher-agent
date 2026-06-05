@@ -1,25 +1,16 @@
 import json
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import requests
 
 import db
-from config import (
-	GEMINI_BASE_URL,
-	GEMINI_MODEL,
-	GEMINI_UPLOAD_BASE_URL,
-	PDF_MAX_SIZE_MB,
-	RESEARCH_CONTEXT,
-	SUMMARISER_PROMPT,
-)
+from config import SUMMARISER_PROMPT, Config
 from scorer import GeminiBudgetExhausted, GeminiQuotaExhausted, _is_quota_exhausted
 
-MODEL_VERSION = GEMINI_MODEL
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
-
-GEMINI_GENERATE_URL = f'{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent'
-GEMINI_FILES_UPLOAD_URL = f'{GEMINI_UPLOAD_BASE_URL}/files'
 
 GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 GEMINI_BACKOFF_DELAYS = (5, 15, 45)
@@ -30,13 +21,30 @@ _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
 
-def summarise_paper(paper, gemini_fn, database_url=None, api_key=None, on_gemini_call=None):
+@dataclass
+class SummariserContext:
+	# Bundles cfg + per-run optional plumbing so summarise_paper stays under ruff's max-args=5 cap once cfg is added.
+	cfg: Config
+	database_url: str | None = None
+	api_key: str | None = None
+	on_gemini_call: Callable | None = None
+
+
+def _generate_url(cfg):
+	return f'{cfg.gemini_base_url}/models/{cfg.gemini_model}:generateContent'
+
+
+def _files_upload_url(cfg):
+	return f'{cfg.gemini_upload_base_url}/files'
+
+
+def summarise_paper(paper, gemini_fn, ctx):
 	# Two short DB sessions (cache check, then persist); Gemini work in between runs with no connection open so Neon can auto-suspend.
 	paper_id = paper.get('paperId')
 	title = (paper.get('title') or '')[:60]
 
-	if database_url and paper_id:
-		with db.session(database_url) as conn:
+	if ctx.database_url and paper_id:
+		with db.session(ctx.database_url) as conn:
 			cached = db.get_summary(conn, paper_id)
 		if cached is not None:
 			print(f'Cache hit, skipping summarisation: {title}')
@@ -44,31 +52,33 @@ def summarise_paper(paper, gemini_fn, database_url=None, api_key=None, on_gemini
 
 	fields = None
 	pdf_url = (paper.get('openAccessPdf') or {}).get('url')
-	if pdf_url and api_key:
-		fields = _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call)
+	if pdf_url and ctx.api_key:
+		fields = _summarise_via_pdf(title, pdf_url, ctx)
 
 	if fields is None:
-		fields = _summarise_via_abstract(paper, gemini_fn)
+		fields = _summarise_via_abstract(paper, gemini_fn, ctx)
 
 	if fields is None:
 		return None
 
-	if database_url and paper_id:
-		with db.session(database_url) as conn:
-			db.upsert_summary(conn, paper_id, fields, MODEL_VERSION)
+	if ctx.database_url and paper_id:
+		with db.session(ctx.database_url) as conn:
+			db.upsert_summary(conn, paper_id, fields, ctx.cfg.gemini_model)
 
 	return fields
 
 
-def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
+def _summarise_via_pdf(title, pdf_url, ctx):
 	# on_gemini_call fires per attempt of each Gemini API call (Files API upload-init and generateContent), not per success. Transport errors count too.
 	try:
-		max_bytes = PDF_MAX_SIZE_MB * 1024 * 1024
+		max_bytes = ctx.cfg.pdf_max_size_mb * 1024 * 1024
 		pdf_bytes = download_pdf(pdf_url, max_bytes)
 		display_name = f'{(title or "paper")[:50]}.pdf'
-		file_uri = upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=on_gemini_call)
-		prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material='See the attached PDF.')
-		response = generate_with_file(prompt, file_uri, api_key, on_attempt=on_gemini_call)
+		file_uri = upload_pdf_to_gemini(pdf_bytes, display_name, ctx.api_key, ctx.cfg, on_attempt=ctx.on_gemini_call)
+		prompt = SUMMARISER_PROMPT.format(
+			research_context=ctx.cfg.research_context, source_material='See the attached PDF.'
+		)
+		response = generate_with_file(prompt, file_uri, ctx.api_key, ctx.cfg, on_attempt=ctx.on_gemini_call)
 		return parse_summary_response(response)
 	except (GeminiQuotaExhausted, GeminiBudgetExhausted):
 		raise
@@ -77,7 +87,7 @@ def _summarise_via_pdf(title, pdf_url, api_key, on_gemini_call):
 		return None
 
 
-def _summarise_via_abstract(paper, gemini_fn):
+def _summarise_via_abstract(paper, gemini_fn, ctx):
 	# Abstract-path counter is fired inside gemini_fn (main wires scorer.gemini's on_attempt directly); nothing to fire here.
 	title = (paper.get('title') or '')[:60]
 	abstract = paper.get('abstract')
@@ -85,7 +95,7 @@ def _summarise_via_abstract(paper, gemini_fn):
 		print(f'No abstract available, cannot summarise: {title}')
 		return None
 	source_material = f'Abstract:\n{abstract}'
-	prompt = SUMMARISER_PROMPT.format(research_context=RESEARCH_CONTEXT, source_material=source_material)
+	prompt = SUMMARISER_PROMPT.format(research_context=ctx.cfg.research_context, source_material=source_material)
 	try:
 		response = gemini_fn(prompt)
 		return parse_summary_response(response)
@@ -139,7 +149,7 @@ def download_pdf(url, max_size_bytes):
 		return bytes(buffer)
 
 
-def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=None):
+def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, cfg, on_attempt=None):
 	# Resumable upload: first request gets an upload URL, second uploads the bytes. Auth on x-goog-api-key (not URL) so the key can't leak via HTTPError.
 	start_headers = {
 		'X-Goog-Upload-Protocol': 'resumable',
@@ -151,7 +161,7 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=None):
 	}
 	# Files API upload-init is a Gemini API call; the signed-URL upload below is not.
 	start = _post_with_retry(
-		GEMINI_FILES_UPLOAD_URL,
+		_files_upload_url(cfg),
 		on_attempt=on_attempt,
 		headers=start_headers,
 		json={'file': {'display_name': display_name}},
@@ -175,14 +185,14 @@ def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, on_attempt=None):
 		raise ValueError(f'Upload response missing file.uri: {e}') from e
 
 
-def generate_with_file(prompt, file_uri, api_key, on_attempt=None):
+def generate_with_file(prompt, file_uri, api_key, cfg, on_attempt=None):
 	body = {
 		'contents': [
 			{'parts': [{'file_data': {'mime_type': 'application/pdf', 'file_uri': file_uri}}, {'text': prompt}]}
 		]
 	}
 	r = _post_with_retry(
-		GEMINI_GENERATE_URL, on_attempt=on_attempt, headers={'x-goog-api-key': api_key}, json=body, timeout=120
+		_generate_url(cfg), on_attempt=on_attempt, headers={'x-goog-api-key': api_key}, json=body, timeout=120
 	)
 	r.raise_for_status()
 	try:

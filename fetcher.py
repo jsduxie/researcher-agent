@@ -3,8 +3,6 @@ from datetime import datetime, timedelta
 
 import requests
 
-from config import DAYS_BACK, MAX_PER_QUERY
-
 SEMANTIC_SCHOLAR_URL = 'https://api.semanticscholar.org/graph/v1/paper/search'
 PAPER_FIELDS = 'title,abstract,authors,year,citationCount,externalIds,openAccessPdf,url,publicationDate'
 
@@ -31,9 +29,9 @@ def _retry_after_seconds(response):
 		return None
 
 
-def fetch_papers(query, api_key):
-	cutoff = _cutoff_year(datetime.now(), DAYS_BACK)
-	params = {'query': query, 'limit': MAX_PER_QUERY, 'fields': PAPER_FIELDS, 'publicationDateOrYear': f'{cutoff}-'}
+def fetch_papers(query, api_key, cfg):
+	cutoff = _cutoff_year(datetime.now(), cfg.days_back)
+	params = {'query': query, 'limit': cfg.max_per_query, 'fields': PAPER_FIELDS, 'publicationDateOrYear': f'{cutoff}-'}
 	headers = {'x-api-key': api_key}
 	time.sleep(2)
 	for attempt in range(len(BACKOFF_DELAYS) + 1):

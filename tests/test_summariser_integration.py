@@ -3,16 +3,21 @@ import os
 import pytest
 import requests
 
+import config
 import fetcher
 import summariser
 from summariser import (
 	MISSING_FIELD_PLACEHOLDER,
+	SummariserContext,
 	download_pdf,
 	generate_with_file,
 	parse_summary_response,
 	summarise_paper,
 	upload_pdf_to_gemini,
 )
+
+# Live tests run against the seed-derived cfg, the same values a clean production DB bootstraps with.
+_TEST_CFG = config.Config(**config.load_seed())
 
 
 def _run_or_skip_on_gemini_outage(call):
@@ -81,7 +86,7 @@ def _build_minimal_pdf(body_text):
 	reason='SEMANTIC_SCHOLAR_API_KEY required for live Semantic Scholar fetch',
 )
 def test_fetch_papers_returns_results_from_semantic_scholar():
-	results = fetcher.fetch_papers('transformer attention', os.environ['SEMANTIC_SCHOLAR_API_KEY'])
+	results = fetcher.fetch_papers('transformer attention', os.environ['SEMANTIC_SCHOLAR_API_KEY'], _TEST_CFG)
 	assert isinstance(results, list)
 	assert len(results) > 0
 	first = results[0]
@@ -93,7 +98,7 @@ def test_fetch_papers_returns_results_from_semantic_scholar():
 
 
 def test_download_pdf_against_live_arxiv_url():
-	max_bytes = summariser.PDF_MAX_SIZE_MB * 1024 * 1024
+	max_bytes = _TEST_CFG.pdf_max_size_mb * 1024 * 1024
 	pdf_bytes = download_pdf(_ARXIV_PDF_URL, max_bytes)
 	assert pdf_bytes.startswith(b'%PDF')
 	assert len(pdf_bytes) > 1000
@@ -103,11 +108,11 @@ def test_upload_and_generate_against_gemini_files_api():
 	# Round-trip a tiny synthetic PDF through the Files API (upload + generate); we only check the two-step protocol completes with non-empty text.
 	pdf_bytes = _build_minimal_pdf('This paper proposes a transformer for BPD detection.')
 	file_uri = _run_or_skip_on_gemini_outage(
-		lambda: upload_pdf_to_gemini(pdf_bytes, 'integration-test.pdf', _GEMINI_API_KEY)
+		lambda: upload_pdf_to_gemini(pdf_bytes, 'integration-test.pdf', _GEMINI_API_KEY, _TEST_CFG)
 	)
 	assert file_uri
 	response = _run_or_skip_on_gemini_outage(
-		lambda: generate_with_file('Reply with the single word ok.', file_uri, _GEMINI_API_KEY)
+		lambda: generate_with_file('Reply with the single word ok.', file_uri, _GEMINI_API_KEY, _TEST_CFG)
 	)
 	assert response.strip()
 
@@ -118,7 +123,7 @@ def test_upload_and_generate_against_gemini_files_api():
 def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 	# End-to-end PDF path against a real arXiv URL with no abstract fallback. Transient Gemini outage surfaces as result is None, which we skip rather than fail.
 	paper = {'paperId': _ARXIV_PAPER_ID, 'title': 'Attention Is All You Need', 'openAccessPdf': {'url': _ARXIV_PDF_URL}}
-	result = summarise_paper(paper, gemini_fn=None, database_url=None, api_key=_GEMINI_API_KEY)
+	result = summarise_paper(paper, None, SummariserContext(cfg=_TEST_CFG, api_key=_GEMINI_API_KEY))
 
 	if result is None:
 		pytest.skip('summarise_paper returned None (likely transient Gemini outage on the PDF path)')
@@ -135,11 +140,13 @@ def test_summarise_paper_full_pdf_chain_returns_four_populated_fields():
 
 def test_summariser_response_parses_when_run_against_a_real_pdf():
 	# Confirms that the live Gemini response with a real PDF parses cleanly through the same code path the production pipeline uses.
-	pdf_bytes = download_pdf(_ARXIV_PDF_URL, summariser.PDF_MAX_SIZE_MB * 1024 * 1024)
-	file_uri = _run_or_skip_on_gemini_outage(lambda: upload_pdf_to_gemini(pdf_bytes, 'attention.pdf', _GEMINI_API_KEY))
+	pdf_bytes = download_pdf(_ARXIV_PDF_URL, _TEST_CFG.pdf_max_size_mb * 1024 * 1024)
+	file_uri = _run_or_skip_on_gemini_outage(
+		lambda: upload_pdf_to_gemini(pdf_bytes, 'attention.pdf', _GEMINI_API_KEY, _TEST_CFG)
+	)
 	prompt = summariser.SUMMARISER_PROMPT.format(
 		research_context='Transformer architectures for text classification.', source_material='See the attached PDF.'
 	)
-	response = _run_or_skip_on_gemini_outage(lambda: generate_with_file(prompt, file_uri, _GEMINI_API_KEY))
+	response = _run_or_skip_on_gemini_outage(lambda: generate_with_file(prompt, file_uri, _GEMINI_API_KEY, _TEST_CFG))
 	fields = parse_summary_response(response)
 	assert set(fields.keys()) == {'methodology', 'findings', 'relevance', 'limitations'}

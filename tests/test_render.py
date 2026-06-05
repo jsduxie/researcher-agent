@@ -4,9 +4,13 @@ from pathlib import Path
 
 import pytest
 
+import config
 from render import _build_links, _format_authors, _paper_render_data, build_email, score_colour
 
 FIXTURES = Path(__file__).parent / 'fixtures'
+
+# build_email takes the run's cfg for the relevance threshold; tests use the seed-derived config so the snapshot matches production rendering.
+_TEST_CFG = config.Config(**config.load_seed())
 
 
 # -- score_colour --
@@ -185,7 +189,7 @@ def test_build_email_renders_snapshot_byte_for_byte(mocker):
 		papers = json.load(f)
 
 	expected = (FIXTURES / 'email_snapshot.html').read_text()
-	assert build_email(papers) == expected
+	assert build_email(papers, _TEST_CFG) == expected
 
 
 def test_build_email_renders_empty_state_with_no_papers(mocker):
@@ -193,6 +197,6 @@ def test_build_email_renders_empty_state_with_no_papers(mocker):
 	mock_dt.now.return_value = datetime(2026, 1, 15)
 	mocker.patch('render.datetime', mock_dt)
 
-	html = build_email([])
+	html = build_email([], _TEST_CFG)
 	assert 'No relevant papers found this period.' in html
 	assert '>0<' in html

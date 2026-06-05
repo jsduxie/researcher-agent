@@ -4,9 +4,7 @@ import time
 
 import requests
 
-from config import BATCH_SIZE, GEMINI_BASE_URL, GEMINI_MODEL, RELEVANCE_THRESHOLD, RESEARCH_CONTEXT, SCORER_PROMPT
-
-GEMINI_URL = f'{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent'
+from config import SCORER_PROMPT
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
@@ -32,16 +30,21 @@ def _is_quota_exhausted(response):
 	return 'RESOURCE_EXHAUSTED' in (response.text or '')
 
 
-def gemini(prompt, api_key, retries=3, on_attempt=None):
+def gemini_url(cfg):
+	return f'{cfg.gemini_base_url}/models/{cfg.gemini_model}:generateContent'
+
+
+def gemini(prompt, api_key, cfg, retries=3, on_attempt=None):
 	# Auth via header rather than ?key= query param keeps the secret out of any URL that may surface in HTTPError messages and downstream logs.
 	headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
+	url = gemini_url(cfg)
 
 	for attempt in range(retries):
 		if on_attempt:
 			on_attempt()
 		time.sleep(5)
-		r = requests.post(GEMINI_URL, headers=headers, json=body, timeout=120)
+		r = requests.post(url, headers=headers, json=body, timeout=120)
 		if r.status_code == 429:
 			if _is_quota_exhausted(r):
 				raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
@@ -112,17 +115,18 @@ def apply_scores(papers, scores, threshold):
 	return enriched, responded
 
 
-def score_and_summarise(papers, gemini_fn):
+def score_and_summarise(papers, gemini_fn, cfg):
 	if not papers:
 		return [], set()
 
 	enriched = []
 	responded = set()
-	for chunk_start in range(0, len(papers), BATCH_SIZE):
-		chunk = papers[chunk_start : chunk_start + BATCH_SIZE]
-		print(f'Scoring batch {chunk_start // BATCH_SIZE + 1} ({len(chunk)} papers)...')
+	batch_size = cfg.batch_size
+	for chunk_start in range(0, len(papers), batch_size):
+		chunk = papers[chunk_start : chunk_start + batch_size]
+		print(f'Scoring batch {chunk_start // batch_size + 1} ({len(chunk)} papers)...')
 		try:
-			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn)
+			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn, cfg)
 		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting remaining batches: {e}')
 			break
@@ -135,7 +139,7 @@ def score_and_summarise(papers, gemini_fn):
 	return enriched, responded
 
 
-def _score_chunk(papers, gemini_fn):
+def _score_chunk(papers, gemini_fn, cfg):
 	if not papers:
 		return [], set()
 
@@ -146,7 +150,7 @@ def _score_chunk(papers, gemini_fn):
 		paper_entries.append(f'[{i}] Title: {title}\nAbstract: {abstract}')
 
 	papers_block = '\n\n'.join(paper_entries)
-	prompt = SCORER_PROMPT.format(research_context=RESEARCH_CONTEXT, papers_block=papers_block)
+	prompt = SCORER_PROMPT.format(research_context=cfg.research_context, papers_block=papers_block)
 
 	try:
 		response = gemini_fn(prompt)
@@ -157,4 +161,4 @@ def _score_chunk(papers, gemini_fn):
 		print(f'Batch Gemini error: {e}')
 		return [], set()
 
-	return apply_scores(papers, results, RELEVANCE_THRESHOLD)
+	return apply_scores(papers, results, cfg.relevance_threshold)
