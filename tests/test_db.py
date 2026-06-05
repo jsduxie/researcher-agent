@@ -379,6 +379,31 @@ def test_list_unscored_propagates_database_error(mock_conn):
 		db.list_unscored(mock_conn, exclude_ids=[], max_attempts=3, limit=20)
 
 
+# -- embeddings --
+
+
+def test_set_paper_embedding_serialises_vector_with_cast(mock_conn):
+	db.set_paper_embedding(mock_conn, 'p1', [0.1, 0.2, 0.3])
+	sql, params = _cursor(mock_conn).execute.call_args.args
+	assert '%s::vector' in sql
+	assert params == ('[0.1,0.2,0.3]', 'p1')
+
+
+def test_get_paper_embedding_parses_vector_text(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = ('[0.1,0.2,0.3]',)
+	assert db.get_paper_embedding(mock_conn, 'p1') == [0.1, 0.2, 0.3]
+
+
+def test_get_paper_embedding_returns_none_when_paper_missing(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = None
+	assert db.get_paper_embedding(mock_conn, 'p1') is None
+
+
+def test_get_paper_embedding_returns_none_when_not_embedded(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (None,)
+	assert db.get_paper_embedding(mock_conn, 'p1') is None
+
+
 # -- mark_scoring_results --
 
 
