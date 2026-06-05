@@ -4,9 +4,13 @@ import os
 import pytest
 import responses
 
+import config
 import db
 import main
 import scorer
+
+# main seeds app_config from the seed file on a clean DB, so the URL its Gemini calls hit is the seed-derived one.
+GEMINI_URL = scorer.gemini_url(config.Config(**config.load_seed()))
 
 _DATABASE_URL_TEST = os.environ.get('DATABASE_URL_TEST')
 
@@ -26,7 +30,8 @@ def clean_db():
 		db.init_schema(conn)
 		with conn.cursor() as cur:
 			cur.execute(
-				'TRUNCATE TABLE summary_feedback, ratings, summaries, paper_authors, runs, papers RESTART IDENTITY CASCADE'
+				'TRUNCATE TABLE summary_feedback, ratings, summaries, paper_authors, runs, papers, '
+				'app_config, app_config_history RESTART IDENTITY CASCADE'
 			)
 
 
@@ -70,7 +75,7 @@ def test_main_runs_end_to_end_with_real_db_and_http_mocked_gemini(clean_db, env,
 	]
 	mocker.patch('main.fetch_papers', return_value=papers)
 	mocker.patch('main.emailer.send_email')
-	responses.add_callback(responses.POST, scorer.GEMINI_URL, callback=_gemini_callback)
+	responses.add_callback(responses.POST, GEMINI_URL, callback=_gemini_callback)
 
 	main.main([])
 
@@ -93,7 +98,7 @@ def test_main_survives_when_every_gemini_call_returns_429(clean_db, env, mocker)
 	mocker.patch('main.emailer.send_email')
 	# Speed: zero out the retry sleeps so the test doesn't spend ~75s in backoff.
 	mocker.patch('scorer.time.sleep')
-	responses.add(responses.POST, scorer.GEMINI_URL, json={'error': 'rate limited'}, status=429)
+	responses.add(responses.POST, GEMINI_URL, json={'error': 'rate limited'}, status=429)
 
 	# Should not raise.
 	main.main([])

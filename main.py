@@ -4,11 +4,11 @@ import os
 import sys
 from pathlib import Path
 
+import config
 import db
 import emailer
 import scorer
 import summariser
-from config import GEMINI_CALL_BUDGET, RELEVANCE_THRESHOLD, SEARCH_QUERIES
 from fetcher import FetchError, dedup_papers, fetch_papers
 from render import build_email
 from scorer import GeminiBudgetExhausted
@@ -16,6 +16,9 @@ from scorer import GeminiBudgetExhausted
 _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
 DRY_RUN = False
 GEMINI_CALL_COUNT = 0
+# Populated from cfg.gemini_call_budget at the top of main() so tests can still patch this module attribute directly without touching cfg.
+GEMINI_CALL_BUDGET = 0
+_CFG = None
 
 # Contract enforced by tests/test_workflow_env.py against the send-digest step.
 REQUIRED_ENV_VARS = (
@@ -38,14 +41,14 @@ def _db_host_for_log(url):
 def _fetch(query, api_key):
 	if DRY_RUN:
 		return json.loads((_FIXTURES / 'papers.json').read_text())
-	return fetch_papers(query, api_key)
+	return fetch_papers(query, api_key, _CFG)
 
 
 def _collect_papers(api_key):
 	all_papers = []
 	attempted = 0
 	errored = 0
-	for query in SEARCH_QUERIES:
+	for query in _CFG.search_queries:
 		print(f'\nSearching: {query}')
 		attempted += 1
 		try:
@@ -60,14 +63,14 @@ def _gemini_score(prompt, retries=3):
 	if DRY_RUN:
 		_record_gemini_call()
 		return (_FIXTURES / 'gemini_score.json').read_text()
-	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries, on_attempt=_record_gemini_call)
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], _CFG, retries, on_attempt=_record_gemini_call)
 
 
 def _gemini_summarise(prompt, retries=3):
 	if DRY_RUN:
 		_record_gemini_call()
 		return (_FIXTURES / 'gemini_summary.json').read_text()
-	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], retries, on_attempt=_record_gemini_call)
+	return scorer.gemini(prompt, os.environ['GEMINI_API_KEY'], _CFG, retries, on_attempt=_record_gemini_call)
 
 
 def _record_gemini_call():
@@ -81,12 +84,13 @@ def _record_gemini_call():
 def _summarise_kept_papers(enriched, database_url):
 	# summariser.summarise_paper manages two short DB sessions (cache check, then persist); no DB open during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
+	ctx = summariser.SummariserContext(
+		cfg=_CFG, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
+	)
 	skipped = 0
 	for i, paper in enumerate(enriched):
 		try:
-			fields = summariser.summarise_paper(
-				paper, _gemini_summarise, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
-			)
+			fields = summariser.summarise_paper(paper, _gemini_summarise, ctx)
 		except GeminiBudgetExhausted as e:
 			# _record_gemini_call raises this when the next attempt would exceed the cap; remaining papers are emailed without summaries.
 			skipped = len(enriched) - i
@@ -118,10 +122,9 @@ def _send(html, paper_count):
 
 
 def _persist_fetched_papers(database_url, unique):
-	# Schema, run row, paper upserts, runs_papers roster (with was_new flag), needs_scoring filter in one scoped session. The summary log proves writes landed; if it's missing from the cron output, env-divergence is the first thing to check.
+	# Run row, paper upserts, runs_papers roster (with was_new flag), needs_scoring filter in one scoped session; schema was initialised in the config-load session. The summary log proves writes landed; if it's missing from the cron output, env-divergence is the first thing to check.
 	paper_ids = [p['paperId'] for p in unique]
 	with db.session(database_url) as conn:
-		db.init_schema(conn)
 		run_id = db.start_run(conn, len(unique))
 		roster = [(p['paperId'], db.upsert_paper(conn, p)) for p in unique]
 		db.record_run_papers(conn, run_id, roster)
@@ -146,7 +149,7 @@ def _finalise_run(database_url, run_id, papers_kept, queries_attempted, queries_
 def main(argv=None):
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
-	global DRY_RUN, GEMINI_CALL_COUNT
+	global DRY_RUN, GEMINI_CALL_COUNT, GEMINI_CALL_BUDGET, _CFG
 	DRY_RUN = parser.parse_args(argv).dry_run
 	GEMINI_CALL_COUNT = 0
 
@@ -160,6 +163,13 @@ def main(argv=None):
 		api_key = os.environ['SEMANTIC_SCHOLAR_API_KEY']
 		database_url = os.environ['DATABASE_URL']
 		print(f'DB target: {_db_host_for_log(database_url)}')
+		# Load cfg before any work runs so a corrupt config table fails fast and every downstream call sees the same values.
+		with db.session(database_url) as conn:
+			db.init_schema(conn)
+			_CFG = config.load(conn)
+	else:
+		_CFG = config.Config(**config.load_seed())
+	GEMINI_CALL_BUDGET = _CFG.gemini_call_budget
 
 	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
@@ -178,9 +188,9 @@ def main(argv=None):
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
 	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
-	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score)
+	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score, _CFG)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
-	print(f'{len(enriched)} papers passed the relevance filter (>={RELEVANCE_THRESHOLD}/10).')
+	print(f'{len(enriched)} papers passed the relevance filter (>={_CFG.relevance_threshold}/10).')
 
 	if database_url is not None and new_papers:
 		_record_scoring_attempts(database_url, new_papers, responded)
@@ -192,7 +202,7 @@ def main(argv=None):
 	if not enriched:
 		print('No relevant papers, skipping email.')
 	else:
-		_send(build_email(enriched), len(enriched))
+		_send(build_email(enriched, _CFG), len(enriched))
 
 	# Finalising the run last so a logging failure never silently skips the email.
 	if database_url is not None:

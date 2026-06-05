@@ -53,7 +53,9 @@ def _paper_render_data(paper):
 	}
 
 
-def build_email(papers):
+def build_email(papers, cfg):
 	today = datetime.now().strftime('%B %d, %Y')
 	rendered = [_paper_render_data(p) for p in papers]
-	return EMAIL_TEMPLATE.render(papers=rendered, count=len(papers), today=today)
+	return EMAIL_TEMPLATE.render(
+		papers=rendered, count=len(papers), today=today, relevance_threshold=cfg.relevance_threshold
+	)

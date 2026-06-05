@@ -4,16 +4,25 @@ import pytest
 import requests
 import responses
 
+import config
 import scorer
 from scorer import (
 	GeminiBudgetExhausted,
 	GeminiQuotaExhausted,
 	_score_chunk,
 	apply_scores,
-	gemini,
 	parse_gemini_scores,
 	score_and_summarise,
 )
+
+# Tests share the seed-derived cfg; GEMINI_URL and BATCH_SIZE come from it so `responses` mocks match what production builds.
+_TEST_CFG = config.Config(**config.load_seed())
+GEMINI_URL = scorer.gemini_url(_TEST_CFG)
+BATCH_SIZE = _TEST_CFG.batch_size
+
+
+def gemini(prompt, api_key, retries=3, on_attempt=None):
+	return scorer.gemini(prompt, api_key, _TEST_CFG, retries, on_attempt=on_attempt)
 
 
 @pytest.fixture(autouse=True)
@@ -139,21 +148,21 @@ def test_apply_scores_float_score_drops_paper(capsys):
 
 def test_score_chunk_returns_empty_for_empty_input(mocker):
 	gemini_fn = mocker.Mock()
-	assert _score_chunk([], gemini_fn) == ([], set())
+	assert _score_chunk([], gemini_fn, _TEST_CFG) == ([], set())
 	gemini_fn.assert_not_called()
 
 
 def test_score_chunk_returns_empty_on_gemini_exception(capsys, mocker):
 	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
-	assert _score_chunk(papers, gemini_fn) == ([], set())
+	assert _score_chunk(papers, gemini_fn, _TEST_CFG) == ([], set())
 	assert 'Batch Gemini error' in capsys.readouterr().out
 
 
 def test_score_chunk_returns_empty_on_malformed_gemini_response(capsys, mocker):
 	gemini_fn = mocker.Mock(return_value='not json')
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
-	assert _score_chunk(papers, gemini_fn) == ([], set())
+	assert _score_chunk(papers, gemini_fn, _TEST_CFG) == ([], set())
 	assert 'Batch Gemini error' in capsys.readouterr().out
 
 
@@ -164,14 +173,14 @@ def test_score_chunk_replaces_missing_abstract_in_prompt():
 		captured['prompt'] = prompt
 		return json.dumps([_valid_score(0, 8)])
 
-	_score_chunk([{'title': 'p'}], fake_gemini)
+	_score_chunk([{'title': 'p'}], fake_gemini, _TEST_CFG)
 	assert 'No abstract available.' in captured['prompt']
 
 
 def test_score_chunk_returns_enriched_papers_on_happy_path(mocker):
 	gemini_fn = mocker.Mock(return_value=json.dumps([_valid_score(0, 8)]))
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
-	enriched, responded = _score_chunk(papers, gemini_fn)
+	enriched, responded = _score_chunk(papers, gemini_fn, _TEST_CFG)
 	assert len(enriched) == 1
 	assert enriched[0]['ai_score'] == 8
 	assert responded == {'p1'}
@@ -182,35 +191,35 @@ def test_score_chunk_returns_enriched_papers_on_happy_path(mocker):
 
 def test_score_and_summarise_empty_input(mocker):
 	gemini_fn = mocker.Mock()
-	assert score_and_summarise([], gemini_fn) == ([], set())
+	assert score_and_summarise([], gemini_fn, _TEST_CFG) == ([], set())
 	gemini_fn.assert_not_called()
 
 
 def test_score_and_summarise_single_small_batch(mocker):
 	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([{'title': 'x'}], {'x'}))
 	gemini_fn = mocker.Mock()
-	enriched, responded = score_and_summarise([{'title': 'p'}], gemini_fn)
+	enriched, responded = score_and_summarise([{'title': 'p'}], gemini_fn, _TEST_CFG)
 	assert enriched == [{'title': 'x'}]
 	assert responded == {'x'}
 	mock_chunk.assert_called_once()
 
 
 def test_score_and_summarise_multiple_batches(mocker):
-	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn: (c, set()))
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg: (c, set()))
 	gemini_fn = mocker.Mock()
-	papers = [{'i': i} for i in range(scorer.BATCH_SIZE * 2 + 3)]
-	enriched, _ = score_and_summarise(papers, gemini_fn)
+	papers = [{'i': i} for i in range(BATCH_SIZE * 2 + 3)]
+	enriched, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert len(enriched) == len(papers)
 	assert mock_chunk.call_count == 3
 	call_sizes = [len(call.args[0]) for call in mock_chunk.call_args_list]
-	assert call_sizes == [scorer.BATCH_SIZE, scorer.BATCH_SIZE, 3]
+	assert call_sizes == [BATCH_SIZE, BATCH_SIZE, 3]
 
 
 def test_score_and_summarise_exact_batch_size(mocker):
-	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn: (c, set()))
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg: (c, set()))
 	gemini_fn = mocker.Mock()
-	papers = [{'i': i} for i in range(scorer.BATCH_SIZE)]
-	score_and_summarise(papers, gemini_fn)
+	papers = [{'i': i} for i in range(BATCH_SIZE)]
+	score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert mock_chunk.call_count == 1
 
 
@@ -218,8 +227,8 @@ def test_score_and_summarise_unions_responded_across_batches(mocker):
 	# Each batch reports a different responded set. score_and_summarise should union them.
 	mocker.patch('scorer._score_chunk', side_effect=[([], {'p1'}), ([], {'p2', 'p3'})])
 	gemini_fn = mocker.Mock()
-	papers = [{'i': i} for i in range(scorer.BATCH_SIZE + 1)]
-	enriched, responded = score_and_summarise(papers, gemini_fn)
+	papers = [{'i': i} for i in range(BATCH_SIZE + 1)]
+	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert enriched == []
 	assert responded == {'p1', 'p2', 'p3'}
 
@@ -229,20 +238,20 @@ def test_score_and_summarise_unions_responded_across_batches(mocker):
 
 @responses.activate
 def test_gemini_returns_response_text_on_happy_path():
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'hello'}]}}]})
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'hello'}]}}]})
 	assert gemini('prompt', 'fake-key') == 'hello'
 
 
 @responses.activate
 def test_gemini_strips_trailing_whitespace_from_response():
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': '  hello  \n'}]}}]})
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': '  hello  \n'}]}}]})
 	assert gemini('prompt', 'fake-key') == 'hello'
 
 
 @responses.activate
 def test_gemini_retries_on_429_then_succeeds(capsys):
-	responses.post(scorer.GEMINI_URL, json={}, status=429)
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	responses.post(GEMINI_URL, json={}, status=429)
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	assert gemini('prompt', 'fake-key') == 'ok'
 	assert 'rate limited' in capsys.readouterr().out
 
@@ -250,21 +259,21 @@ def test_gemini_retries_on_429_then_succeeds(capsys):
 @responses.activate
 def test_gemini_raises_after_all_retries_are_429():
 	for _ in range(3):
-		responses.post(scorer.GEMINI_URL, json={}, status=429)
+		responses.post(GEMINI_URL, json={}, status=429)
 	with pytest.raises(Exception, match='Gemini failed after retries'):
 		gemini('prompt', 'fake-key')
 
 
 @responses.activate
 def test_gemini_raises_on_500():
-	responses.post(scorer.GEMINI_URL, json={'error': 'oops'}, status=500)
+	responses.post(GEMINI_URL, json={'error': 'oops'}, status=500)
 	with pytest.raises(requests.HTTPError):
 		gemini('prompt', 'fake-key')
 
 
 @responses.activate
 def test_gemini_propagates_network_error():
-	responses.post(scorer.GEMINI_URL, body=requests.ConnectionError('boom'))
+	responses.post(GEMINI_URL, body=requests.ConnectionError('boom'))
 	with pytest.raises(requests.ConnectionError):
 		gemini('prompt', 'fake-key')
 
@@ -272,7 +281,7 @@ def test_gemini_propagates_network_error():
 def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 	with responses.RequestsMock() as rmock:
 		for _ in range(3):
-			rmock.post(scorer.GEMINI_URL, json={}, status=429)
+			rmock.post(GEMINI_URL, json={}, status=429)
 		with pytest.raises(Exception, match='Gemini failed after retries'):
 			gemini('prompt', 'fake-key')
 	# Each attempt: pre-attempt sleep(5), then on 429 sleep(15 * (attempt + 1)).
@@ -283,7 +292,7 @@ def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 @responses.activate
 def test_gemini_sends_api_key_in_header_not_url():
 	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	gemini('prompt', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
 	assert 'my-secret-key' not in responses.calls[0].request.url
@@ -403,21 +412,21 @@ def test_apply_scores_responded_empty_when_scores_not_a_list():
 
 @responses.activate
 def test_gemini_raises_when_candidates_key_missing():
-	responses.post(scorer.GEMINI_URL, json={})
+	responses.post(GEMINI_URL, json={})
 	with pytest.raises(ValueError, match='missing expected fields'):
 		gemini('prompt', 'fake-key')
 
 
 @responses.activate
 def test_gemini_raises_when_candidates_is_empty():
-	responses.post(scorer.GEMINI_URL, json={'candidates': []})
+	responses.post(GEMINI_URL, json={'candidates': []})
 	with pytest.raises(ValueError, match='missing expected fields'):
 		gemini('prompt', 'fake-key')
 
 
 @responses.activate
 def test_gemini_raises_when_text_field_missing():
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
 	with pytest.raises(ValueError, match='missing expected fields'):
 		gemini('prompt', 'fake-key')
 
@@ -428,7 +437,7 @@ def test_gemini_raises_when_text_field_missing():
 @responses.activate
 def test_gemini_raises_quota_exhausted_on_resource_exhausted_429():
 	responses.post(
-		scorer.GEMINI_URL,
+		GEMINI_URL,
 		json={'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED', 'message': 'Quota exceeded'}},
 		status=429,
 	)
@@ -438,7 +447,7 @@ def test_gemini_raises_quota_exhausted_on_resource_exhausted_429():
 
 def test_gemini_skips_backoff_sleep_on_quota_exhausted(no_sleep):
 	with responses.RequestsMock() as rmock:
-		rmock.post(scorer.GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+		rmock.post(GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 		with pytest.raises(GeminiQuotaExhausted):
 			gemini('prompt', 'fake-key')
 	# Only the pre-attempt sleep(5); no backoff sleep ran (retry layer did not engage).
@@ -449,7 +458,7 @@ def test_gemini_skips_backoff_sleep_on_quota_exhausted(no_sleep):
 @responses.activate
 def test_gemini_detects_quota_exhausted_via_substring_when_body_not_json():
 	# Falls back to substring match when the body is not parseable JSON.
-	responses.post(scorer.GEMINI_URL, body='Error: RESOURCE_EXHAUSTED (daily limit)', status=429)
+	responses.post(GEMINI_URL, body='Error: RESOURCE_EXHAUSTED (daily limit)', status=429)
 	with pytest.raises(GeminiQuotaExhausted):
 		gemini('prompt', 'fake-key')
 
@@ -459,7 +468,7 @@ def test_score_chunk_propagates_quota_exhausted_without_swallowing(mocker):
 	gemini_fn = mocker.Mock(side_effect=GeminiQuotaExhausted('quota'))
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
 	with pytest.raises(GeminiQuotaExhausted, match='quota'):
-		_score_chunk(papers, gemini_fn)
+		_score_chunk(papers, gemini_fn, _TEST_CFG)
 
 
 def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
@@ -473,8 +482,8 @@ def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
 		],
 	)
 	gemini_fn = mocker.Mock()
-	papers = [{'paperId': f'p{i}'} for i in range(scorer.BATCH_SIZE * 3)]
-	enriched, responded = score_and_summarise(papers, gemini_fn)
+	papers = [{'paperId': f'p{i}'} for i in range(BATCH_SIZE * 3)]
+	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
 	assert responded == {'p1'}
@@ -488,7 +497,7 @@ def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
 def test_gemini_fires_on_attempt_once_per_retry_iteration():
 	# Three regular 429s exhaust retries; on_attempt fires once per attempt = 3.
 	for _ in range(3):
-		responses.post(scorer.GEMINI_URL, json={'error': 'rate limited'}, status=429)
+		responses.post(GEMINI_URL, json={'error': 'rate limited'}, status=429)
 	counter = []
 	with pytest.raises(Exception, match='Gemini failed after retries'):
 		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
@@ -497,7 +506,7 @@ def test_gemini_fires_on_attempt_once_per_retry_iteration():
 
 @responses.activate
 def test_gemini_fires_on_attempt_once_on_immediate_success():
-	responses.post(scorer.GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	counter = []
 	gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
 	assert len(counter) == 1
@@ -506,7 +515,7 @@ def test_gemini_fires_on_attempt_once_on_immediate_success():
 @responses.activate
 def test_gemini_fires_on_attempt_before_quota_exhausted_raise():
 	# The failing attempt counts even though it raises GeminiQuotaExhausted.
-	responses.post(scorer.GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 	counter = []
 	with pytest.raises(GeminiQuotaExhausted):
 		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
@@ -533,7 +542,7 @@ def test_score_chunk_propagates_budget_exhausted_without_swallowing(mocker):
 	gemini_fn = mocker.Mock(side_effect=GeminiBudgetExhausted('budget'))
 	papers = [{'paperId': 'p1', 'title': 'p', 'abstract': 'a'}]
 	with pytest.raises(GeminiBudgetExhausted, match='budget'):
-		_score_chunk(papers, gemini_fn)
+		_score_chunk(papers, gemini_fn, _TEST_CFG)
 
 
 def test_score_and_summarise_short_circuits_on_budget_exhausted(mocker, capsys):
@@ -547,8 +556,8 @@ def test_score_and_summarise_short_circuits_on_budget_exhausted(mocker, capsys):
 		],
 	)
 	gemini_fn = mocker.Mock()
-	papers = [{'paperId': f'p{i}'} for i in range(scorer.BATCH_SIZE * 3)]
-	enriched, responded = score_and_summarise(papers, gemini_fn)
+	papers = [{'paperId': f'p{i}'} for i in range(BATCH_SIZE * 3)]
+	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
 	assert responded == {'p1'}

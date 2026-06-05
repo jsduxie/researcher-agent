@@ -1,7 +1,13 @@
+from dataclasses import replace
+
 import pytest
 
+import config
 import main
-from config import SEARCH_QUERIES
+
+# main loads cfg from the DB at the top of main(); tests stub config.load with the seed-derived config so values match the old module constants.
+_TEST_CFG = config.Config(**config.load_seed())
+SEARCH_QUERIES = _TEST_CFG.search_queries
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +32,7 @@ def mock_db(mocker):
 		'conn': conn,
 		'session': mocker.patch('main.db.session', return_value=session_cm),
 		'init_schema': mocker.patch('main.db.init_schema'),
+		'config_load': mocker.patch('main.config.load', return_value=_TEST_CFG),
 		'start_run': mocker.patch('main.db.start_run', return_value=42),
 		'upsert_paper': mocker.patch('main.db.upsert_paper', return_value=True),
 		'record_run_papers': mocker.patch('main.db.record_run_papers'),
@@ -210,8 +217,8 @@ def test_live_run_propagates_db_session_failure(mock_db, mock_io):
 	mock_db['session'].side_effect = psycopg.OperationalError('connection refused')
 	with pytest.raises(psycopg.OperationalError, match='connection refused'):
 		main.main([])
-	# Phase A opens the first session after fetch; fetch ran, but scoring and email did not.
-	mock_io['fetch'].assert_called()
+	# The config-load session opens before any fetch work, so a dead DB fails the run fast.
+	mock_io['fetch'].assert_not_called()
 	mock_io['score'].assert_not_called()
 	mock_io['send'].assert_not_called()
 
@@ -263,7 +270,6 @@ def test_live_run_exits_nonzero_when_all_queries_error(mock_db, mock_io, mocker,
 
 
 def test_live_run_proceeds_when_some_queries_succeed(mock_db, mock_io, mocker):
-	from config import SEARCH_QUERIES
 	from fetcher import FetchError
 
 	side_effects = [FetchError('rate limited')] * (len(SEARCH_QUERIES) - 1) + [[{'paperId': 'p1'}]]
@@ -370,22 +376,24 @@ def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io
 def test_gemini_score_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
 	# Orchestration tests mock scorer.score_and_summarise wholesale; cover the live-mode branch of _gemini_score directly.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
+	monkeypatch.setattr(main, '_CFG', _TEST_CFG)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='gemini json')
 
 	result = main._gemini_score('prompt text')
 
-	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3, on_attempt=main._record_gemini_call)
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', _TEST_CFG, 3, on_attempt=main._record_gemini_call)
 	assert result == 'gemini json'
 
 
 def test_gemini_summarise_wrapper_calls_scorer_gemini_in_live_mode(mocker, monkeypatch):
 	# Same as above for the summariser-facing wrapper.
 	monkeypatch.setattr(main, 'DRY_RUN', False)
+	monkeypatch.setattr(main, '_CFG', _TEST_CFG)
 	mock_scorer_gemini = mocker.patch('main.scorer.gemini', return_value='summary json')
 
 	result = main._gemini_summarise('prompt text')
 
-	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', 3, on_attempt=main._record_gemini_call)
+	mock_scorer_gemini.assert_called_once_with('prompt text', 'fake', _TEST_CFG, 3, on_attempt=main._record_gemini_call)
 	assert result == 'summary json'
 
 
@@ -448,11 +456,13 @@ def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
 	mock_io['summarise'].assert_called_once()
 	call = mock_io['summarise'].call_args
 	assert call.args[0]['paperId'] == 'p1'
-	# Wired with summariser's gemini wrapper, database_url (summariser manages its own scoped sessions), api_key, and the call-count recorder.
+	# Wired with summariser's gemini wrapper and a context carrying cfg, database_url (summariser manages its own scoped sessions), api_key, and the call-count recorder.
 	assert call.args[1] is main._gemini_summarise
-	assert call.kwargs['database_url'] == 'postgresql://fake'
-	assert call.kwargs['api_key'] == 'fake'
-	assert call.kwargs['on_gemini_call'] is main._record_gemini_call
+	ctx = call.args[2]
+	assert ctx.cfg is _TEST_CFG
+	assert ctx.database_url == 'postgresql://fake'
+	assert ctx.api_key == 'fake'
+	assert ctx.on_gemini_call is main._record_gemini_call
 
 
 def test_live_run_summarises_only_papers_above_threshold(mock_db, mock_io):
@@ -492,8 +502,8 @@ def test_live_run_handles_summariser_returning_none(mock_db, mock_io):
 
 def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
 	# The on_gemini_call callback fires inside summariser; simulate it firing on each summarise_paper call to confirm main accumulates the count.
-	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
-		on_gemini_call()
+	def fake_summarise(paper, gemini_fn, ctx):
+		ctx.on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
 	mock_io['summarise'].side_effect = fake_summarise
@@ -503,10 +513,10 @@ def test_live_run_prints_total_gemini_call_count(mock_db, mock_io, capsys):
 
 
 def test_live_run_logs_budget_exhausted_message_when_count_reaches_cap(mock_db, mock_io, mocker, capsys):
-	mocker.patch('main.GEMINI_CALL_BUDGET', 1)
+	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=1)
 
-	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
-		on_gemini_call()
+	def fake_summarise(paper, gemini_fn, ctx):
+		ctx.on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
 	mock_io['summarise'].side_effect = fake_summarise
@@ -515,7 +525,7 @@ def test_live_run_logs_budget_exhausted_message_when_count_reaches_cap(mock_db, 
 
 
 def test_live_run_does_not_log_budget_exhausted_when_under_cap(mock_db, mock_io, mocker, capsys):
-	mocker.patch('main.GEMINI_CALL_BUDGET', 1_000_000)
+	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=1_000_000)
 	main.main([])
 	assert 'Gemini budget exhausted' not in capsys.readouterr().out
 
@@ -532,9 +542,9 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Phase D sessions are now owned by summariser.summarise_paper (mocked here); main opens A (init+upserts+needs_scoring) + C (mark) + E (finish) = 3.
+	# Phase D sessions are now owned by summariser.summarise_paper (mocked here); main opens config-load (init+cfg) + A (upserts+needs_scoring) + C (mark) + E (finish) = 4.
 	main.main([])
-	assert mock_db['session'].call_count == 3
+	assert mock_db['session'].call_count == 4
 
 
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
@@ -542,8 +552,8 @@ def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io)
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
 	mock_io['score'].return_value = ([], set())
 	main.main([])
-	# 1 (A) + 0 (C) + 1 (E) = 2.
-	assert mock_db['session'].call_count == 2
+	# 1 (config-load) + 1 (A) + 0 (C) + 1 (E) = 3.
+	assert mock_db['session'].call_count == 3
 
 
 def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
@@ -578,7 +588,7 @@ def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
 
 
 def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
-	# Phase A succeeds; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
+	# Config-load and Phase A succeed; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
 	from contextlib import contextmanager
 
 	import psycopg
@@ -588,7 +598,7 @@ def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
 	@contextmanager
 	def maybe_failing(url):
 		call_count[0] += 1
-		if call_count[0] == 1:
+		if call_count[0] <= 2:
 			yield mock_db['conn']
 		else:
 			raise psycopg.OperationalError('reaped')
@@ -697,9 +707,9 @@ def test_gemini_score_permits_calls_until_count_reaches_cap(mocker, monkeypatch)
 
 def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_io, mocker, capsys):
 	# Three enriched papers, budget=1 already consumed by scoring; first summarise attempt detects via on_gemini_call and raises before any Gemini work.
-	mocker.patch('main.GEMINI_CALL_BUDGET', 1)
+	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=1)
 
-	def consume_then_score(papers, gemini_fn):
+	def consume_then_score(papers, gemini_fn, cfg):
 		main.GEMINI_CALL_COUNT = 1
 		return (
 			[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
@@ -708,8 +718,8 @@ def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_
 
 	mock_io['score'].side_effect = consume_then_score
 
-	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
-		on_gemini_call()
+	def fake_summarise(paper, gemini_fn, ctx):
+		ctx.on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
 	mock_io['summarise'].side_effect = fake_summarise
@@ -724,14 +734,14 @@ def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_
 
 def test_summarise_kept_papers_stops_mid_loop_when_count_crosses_cap(mock_db, mock_io, mocker, capsys):
 	# Budget=2, scoring burned 0, summariser fires on_gemini_call once per paper; third call raises in-place before doing any work.
-	mocker.patch('main.GEMINI_CALL_BUDGET', 2)
+	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=2)
 	mock_io['score'].return_value = (
 		[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
 		{'a', 'b', 'c'},
 	)
 
-	def fake_summarise(paper, gemini_fn, database_url, api_key, on_gemini_call):
-		on_gemini_call()
+	def fake_summarise(paper, gemini_fn, ctx):
+		ctx.on_gemini_call()
 		return {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 
 	mock_io['summarise'].side_effect = fake_summarise
@@ -746,7 +756,7 @@ def test_summarise_kept_papers_stops_mid_loop_when_count_crosses_cap(mock_db, mo
 
 def test_live_run_does_not_crash_when_budget_zero(mock_db, mock_io, mocker):
 	# Defensive: if the budget is mis-set to 0, scorer batches get refused, summariser never runs, the pipeline still finishes the run cleanly.
-	mocker.patch('main.GEMINI_CALL_BUDGET', 0)
+	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=0)
 	mock_io['score'].return_value = ([], set())
 
 	main.main([])

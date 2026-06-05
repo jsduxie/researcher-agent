@@ -4,16 +4,43 @@ import pytest
 import requests
 import responses
 
-import summariser
+import config
 from summariser import (
 	MISSING_FIELD_PLACEHOLDER,
-	MODEL_VERSION,
+	SummariserContext,
 	download_pdf,
 	generate_with_file,
 	parse_summary_response,
 	summarise_paper,
 	upload_pdf_to_gemini,
 )
+
+# Tests share a single cfg derived from the seed file. URLs and the persisted model_version come from it so production builds match what `responses` mocks expect.
+_TEST_CFG = config.Config(**config.load_seed())
+MODEL_VERSION = _TEST_CFG.gemini_model
+GEMINI_GENERATE_URL = f'{_TEST_CFG.gemini_base_url}/models/{_TEST_CFG.gemini_model}:generateContent'
+GEMINI_FILES_UPLOAD_URL = f'{_TEST_CFG.gemini_upload_base_url}/files'
+
+# Aliases so the bulk-replace below doesn't loop the wrappers back on themselves.
+_summarise_paper = summarise_paper
+_upload_pdf_to_gemini = upload_pdf_to_gemini
+_generate_with_file = generate_with_file
+
+
+def _ctx(**kwargs):
+	return SummariserContext(cfg=_TEST_CFG, **kwargs)
+
+
+def _summarise(paper, gemini_fn, **kwargs):
+	return _summarise_paper(paper, gemini_fn, _ctx(**kwargs))
+
+
+def _upload(*args, **kwargs):
+	return _upload_pdf_to_gemini(*args, _TEST_CFG, **kwargs)
+
+
+def _generate(*args, **kwargs):
+	return _generate_with_file(*args, _TEST_CFG, **kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -118,7 +145,7 @@ def test_summarise_paper_short_circuits_on_cache_hit(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result == cached
 	gemini_fn.assert_not_called()
@@ -130,7 +157,7 @@ def test_summarise_paper_skips_cache_check_when_no_conn(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
 
 	get_summary.assert_not_called()
 
@@ -141,7 +168,7 @@ def test_summarise_paper_skips_cache_check_when_no_paper_id(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	get_summary.assert_not_called()
 	upsert.assert_not_called()
@@ -157,7 +184,7 @@ def test_summarise_paper_calls_gemini_and_returns_four_fields(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
 	gemini_fn.assert_called_once()
@@ -168,7 +195,7 @@ def test_summarise_paper_persists_fresh_summary(mocker, mock_session):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	upsert.assert_called_once()
 	call = upsert.call_args
@@ -182,7 +209,7 @@ def test_summarise_paper_does_not_persist_when_conn_is_none(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url=None)
 
 	upsert.assert_not_called()
 
@@ -192,7 +219,7 @@ def test_summarise_paper_does_not_persist_when_no_paper_id(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	summarise_paper({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	_summarise({'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	upsert.assert_not_called()
 
@@ -206,9 +233,7 @@ def test_summarise_paper_prompt_includes_abstract_and_context(mocker):
 		captured['prompt'] = prompt
 		return _valid_response()
 
-	summarise_paper(
-		{'paperId': 'p1', 'abstract': 'unique-abstract-text-xyz'}, fake_gemini, database_url='postgresql://x'
-	)
+	_summarise({'paperId': 'p1', 'abstract': 'unique-abstract-text-xyz'}, fake_gemini, database_url='postgresql://x')
 
 	assert 'unique-abstract-text-xyz' in captured['prompt']
 	assert 'RESEARCH CONTEXT' in captured['prompt']
@@ -222,7 +247,7 @@ def test_summarise_paper_returns_none_when_no_abstract(mocker, capsys):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper({'paperId': 'p1'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	gemini_fn.assert_not_called()
@@ -235,7 +260,7 @@ def test_summarise_paper_returns_none_when_no_abstract(mocker, capsys):
 def test_summarise_paper_returns_none_when_abstract_is_empty(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock()
-	assert summarise_paper({'paperId': 'p1', 'abstract': ''}, gemini_fn, database_url='postgresql://x') is None
+	assert _summarise({'paperId': 'p1', 'abstract': ''}, gemini_fn, database_url='postgresql://x') is None
 	gemini_fn.assert_not_called()
 
 
@@ -244,7 +269,7 @@ def test_summarise_paper_returns_none_on_gemini_exception(mocker, capsys):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(side_effect=Exception('rate limit'))
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	upsert.assert_not_called()
@@ -256,7 +281,7 @@ def test_summarise_paper_returns_none_on_malformed_response(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value='not json at all')
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is None
 	upsert.assert_not_called()
@@ -269,7 +294,7 @@ def test_summarise_paper_persists_partial_response_with_placeholders(mocker):
 	body = json.dumps({'methodology': 'm', 'findings': 'f', 'relevance_to_research': 'r'})  # no limitations
 	gemini_fn = mocker.Mock(return_value=body)
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is not None
 	assert result['limitations'] == MISSING_FIELD_PLACEHOLDER
@@ -283,7 +308,7 @@ def test_summarise_paper_handles_paper_with_missing_title(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	result = _summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 	assert result is not None
 
@@ -293,22 +318,20 @@ def test_summarise_paper_handles_paper_with_missing_title(mocker):
 
 def test_module_version_is_set():
 	# Persisted alongside summaries so a later prompt or model change can be reasoned about against historical data.
-	assert summariser.MODEL_VERSION
+	assert MODEL_VERSION
 
 
 # -- on_gemini_call callback (per-attempt for PDF path; abstract path counts inside gemini_fn) --
 
 
-def test_on_gemini_call_does_not_fire_for_abstract_path_via_summarise_paper(mocker):
+def test_on_gemini_call_does_not_fire_for_abstract_path_via__summarise(mocker):
 	# Abstract path no longer relays on_gemini_call; the counter fires inside gemini_fn (scorer.gemini's on_attempt, wired by main). Mocked gemini_fn = 0 fires.
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	counter = mocker.Mock()
 
-	summarise_paper(
-		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
-	)
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter)
 
 	counter.assert_not_called()
 
@@ -321,9 +344,7 @@ def test_on_gemini_call_does_not_fire_on_cache_hit(mocker):
 	gemini_fn = mocker.Mock()
 	counter = mocker.Mock()
 
-	summarise_paper(
-		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
-	)
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter)
 
 	counter.assert_not_called()
 
@@ -334,9 +355,7 @@ def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
 	gemini_fn = mocker.Mock(side_effect=Exception('boom'))
 	counter = mocker.Mock()
 
-	summarise_paper(
-		{'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter
-	)
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', on_gemini_call=counter)
 
 	counter.assert_not_called()
 
@@ -345,16 +364,14 @@ def test_on_gemini_call_does_not_fire_when_abstract_gemini_raises(mocker):
 def test_on_gemini_call_fires_per_gemini_attempt_in_pdf_path(mocker):
 	# PDF success path fires per attempt of upload-init + generate (signed-URL data upload is not a Gemini API call). One attempt each on happy path = 2.
 	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
-	responses.post(
-		summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': _valid_response()}]}}]}
-	)
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': _valid_response()}]}}]})
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	counter = mocker.Mock()
 
-	summarise_paper(
+	_summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		mocker.Mock(),
 		database_url='postgresql://x',
@@ -374,7 +391,7 @@ def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mock
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	counter = mocker.Mock()
 
-	summarise_paper(
+	_summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -386,13 +403,13 @@ def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mock
 
 
 @responses.activate
-def test_post_with_retry_fires_on_attempt_per_iteration_via_generate_with_file():
+def test_post_with_retry_fires_on_attempt_per_iteration_via__generate():
 	# Two 500s then success: on_attempt fires once per iteration of _post_with_retry.
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	counter = []
-	generate_with_file('p', 'files/abc', 'k', on_attempt=lambda: counter.append(1))
+	_generate('p', 'files/abc', 'k', on_attempt=lambda: counter.append(1))
 	assert len(counter) == 3
 
 
@@ -422,7 +439,7 @@ def test_no_db_session_is_open_during_summariser_gemini_work(mocker):
 		active_during_gemini.append(active[0])
 		return _valid_response()
 
-	summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_snap, database_url='postgresql://x')
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_snap, database_url='postgresql://x')
 
 	# Cache-check session closed before gemini_fn; persist session opens only after.
 	assert active_during_gemini == [0]
@@ -486,26 +503,26 @@ UPLOAD_TARGET = 'https://upload.example.com/sessions/abc'
 
 @responses.activate
 def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'https://files/abc', 'name': 'files/abc'}})
-	assert upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'fake-key') == 'https://files/abc'
+	assert _upload(b'pdf', 'paper.pdf', 'fake-key') == 'https://files/abc'
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_sends_api_key_in_header_not_url():
 	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
-	upload_pdf_to_gemini(b'pdf', 'my-key-value', 'my-key-value-secret')
+	_upload(b'pdf', 'my-key-value', 'my-key-value-secret')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-key-value-secret'
 	assert 'my-key-value-secret' not in responses.calls[0].request.url
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_sends_display_name_in_metadata():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
-	upload_pdf_to_gemini(b'pdf', 'a-paper.pdf', 'k')
+	_upload(b'pdf', 'a-paper.pdf', 'k')
 	start_body = json.loads(responses.calls[0].request.body)
 	assert start_body == {'file': {'display_name': 'a-paper.pdf'}}
 
@@ -513,58 +530,58 @@ def test_upload_pdf_to_gemini_sends_display_name_in_metadata():
 @responses.activate
 def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_start_5xx():
 	for _ in range(4):
-		responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=500)
+		responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 	assert len(responses.calls) == 4
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_does_not_retry_start_on_400():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=400)
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=400)
 	with pytest.raises(requests.HTTPError):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 	assert len(responses.calls) == 1
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_raises_when_no_upload_url_header():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={})
 	with pytest.raises(ValueError, match='X-Goog-Upload-URL'):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_upload_5xx():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	for _ in range(4):
 		responses.post(UPLOAD_TARGET, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_retries_start_on_429_then_succeeds():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=429)
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=429)
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/x'}})
-	assert upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k') == 'files/x'
+	assert _upload(b'pdf', 'paper.pdf', 'k') == 'files/x'
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_raises_when_response_missing_file_uri():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {}})
 	with pytest.raises(ValueError, match='missing file.uri'):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 
 
 @responses.activate
 def test_upload_pdf_to_gemini_raises_when_file_key_missing():
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={})
 	with pytest.raises(ValueError, match='missing file.uri'):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 
 
 # -- generate_with_file --
@@ -572,20 +589,20 @@ def test_upload_pdf_to_gemini_raises_when_file_key_missing():
 
 @responses.activate
 def test_generate_with_file_returns_text_on_happy_path():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert generate_with_file('prompt', 'files/abc', 'k') == 'ok'
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert _generate('prompt', 'files/abc', 'k') == 'ok'
 
 
 @responses.activate
 def test_generate_with_file_strips_response_whitespace():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': '  ok  '}]}}]})
-	assert generate_with_file('prompt', 'files/abc', 'k') == 'ok'
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': '  ok  '}]}}]})
+	assert _generate('prompt', 'files/abc', 'k') == 'ok'
 
 
 @responses.activate
 def test_generate_with_file_sends_file_data_and_prompt_parts():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	generate_with_file('the-prompt', 'files/abc', 'k')
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	_generate('the-prompt', 'files/abc', 'k')
 	body = json.loads(responses.calls[0].request.body)
 	parts = body['contents'][0]['parts']
 	assert parts[0] == {'file_data': {'mime_type': 'application/pdf', 'file_uri': 'files/abc'}}
@@ -595,8 +612,8 @@ def test_generate_with_file_sends_file_data_and_prompt_parts():
 @responses.activate
 def test_generate_with_file_sends_api_key_in_header_not_url():
 	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	generate_with_file('prompt', 'files/abc', 'my-secret-key')
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	_generate('prompt', 'files/abc', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
 	assert 'my-secret-key' not in responses.calls[0].request.url
 
@@ -604,41 +621,41 @@ def test_generate_with_file_sends_api_key_in_header_not_url():
 @responses.activate
 def test_generate_with_file_raises_after_retries_exhausted_on_5xx():
 	for _ in range(4):
-		responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
+		responses.post(GEMINI_GENERATE_URL, json={}, status=500)
 	with pytest.raises(requests.HTTPError):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 	assert len(responses.calls) == 4
 
 
 @responses.activate
 def test_generate_with_file_does_not_retry_on_400():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=400)
+	responses.post(GEMINI_GENERATE_URL, json={}, status=400)
 	with pytest.raises(requests.HTTPError):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 	assert len(responses.calls) == 1
 
 
 @responses.activate
 def test_generate_with_file_retries_on_429_then_succeeds():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=429)
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert generate_with_file('p', 'files/abc', 'k') == 'ok'
+	responses.post(GEMINI_GENERATE_URL, json={}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert _generate('p', 'files/abc', 'k') == 'ok'
 	assert len(responses.calls) == 2
 
 
 @responses.activate
 def test_generate_with_file_retries_on_500_then_succeeds():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert generate_with_file('p', 'files/abc', 'k') == 'ok'
+	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert _generate('p', 'files/abc', 'k') == 'ok'
 	assert len(responses.calls) == 2
 
 
 @responses.activate
 def test_generate_with_file_honours_retry_after_seconds(_no_sleep):
-	responses.post(summariser.GEMINI_GENERATE_URL, status=429, headers={'Retry-After': '11'})
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	generate_with_file('p', 'files/abc', 'k')
+	responses.post(GEMINI_GENERATE_URL, status=429, headers={'Retry-After': '11'})
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	_generate('p', 'files/abc', 'k')
 	# Retry-After is the only sleep this function triggers; the 11s override is honoured in place of the 5s default backoff for the first retry.
 	delays = [c.args[0] for c in _no_sleep.call_args_list]
 	assert delays == [11]
@@ -646,23 +663,23 @@ def test_generate_with_file_honours_retry_after_seconds(_no_sleep):
 
 @responses.activate
 def test_generate_with_file_raises_when_candidates_missing():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={})
+	responses.post(GEMINI_GENERATE_URL, json={})
 	with pytest.raises(ValueError, match='missing expected fields'):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 
 
 @responses.activate
 def test_generate_with_file_raises_when_candidates_empty():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': []})
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': []})
 	with pytest.raises(ValueError, match='missing expected fields'):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 
 
 @responses.activate
 def test_generate_with_file_raises_when_text_field_missing():
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
 	with pytest.raises(ValueError, match='missing expected fields'):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 
 
 # -- summarise_paper: PDF path integration --
@@ -673,11 +690,9 @@ def _mock_pdf_pipeline(*, gemini_text=None, upload_url=UPLOAD_TARGET, file_uri='
 	if gemini_text is None:
 		gemini_text = _valid_response()
 	responses.get(PDF_URL, body=b'%PDF-1.4 fake')
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': upload_url})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': upload_url})
 	responses.post(upload_url, json={'file': {'uri': file_uri}})
-	responses.post(
-		summariser.GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': gemini_text}]}}]}
-	)
+	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': gemini_text}]}}]})
 
 
 @responses.activate
@@ -687,7 +702,7 @@ def test_summarise_paper_pdf_path_returns_four_fields(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'title': 'T', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -705,7 +720,7 @@ def test_summarise_paper_pdf_path_persists_summary(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	upsert = mocker.patch('summariser.db.upsert_summary')
 
-	summarise_paper(
+	_summarise(
 		{'paperId': 'p1', 'title': 'T', 'openAccessPdf': {'url': PDF_URL}},
 		mocker.Mock(),
 		database_url='postgresql://x',
@@ -726,7 +741,7 @@ def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, 
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -743,12 +758,12 @@ def test_summarise_paper_falls_back_to_abstract_when_pdf_download_fails(mocker, 
 def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
 	responses.get(PDF_URL, body=b'pdf')
 	# 400 fails immediately without engaging the retry path so the test stays focused on the fallback behaviour rather than retry mechanics.
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, status=400)
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=400)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -762,14 +777,14 @@ def test_summarise_paper_falls_back_when_upload_start_fails(mocker):
 @responses.activate
 def test_summarise_paper_falls_back_when_generate_fails(mocker):
 	responses.get(PDF_URL, body=b'pdf')
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
-	responses.post(summariser.GEMINI_GENERATE_URL, json={}, status=400)
+	responses.post(GEMINI_GENERATE_URL, json={}, status=400)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -787,7 +802,7 @@ def test_summarise_paper_falls_back_when_pdf_response_is_malformed(mocker):
 	mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -805,7 +820,7 @@ def test_summarise_paper_returns_none_when_pdf_fails_and_no_abstract(mocker):
 	upsert = mocker.patch('summariser.db.upsert_summary')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -823,7 +838,7 @@ def test_summarise_paper_skips_pdf_path_when_no_api_key(mocker):
 	get_request = mocker.patch('summariser.requests.get')
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}}, gemini_fn, database_url='postgresql://x'
 	)
 
@@ -838,7 +853,7 @@ def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
 	get_request = mocker.patch('summariser.requests.get')
 	gemini_fn = mocker.Mock()
 
-	result = summarise_paper(
+	result = _summarise(
 		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 		gemini_fn,
 		database_url='postgresql://x',
@@ -857,18 +872,18 @@ def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
 def test_generate_with_file_raises_quota_exhausted_on_resource_exhausted_429():
 	import scorer
 
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 
 
 @responses.activate
 def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
 	import scorer
 
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
-		generate_with_file('p', 'files/abc', 'k')
+		_generate('p', 'files/abc', 'k')
 	# No backoff sleeps; quota detection bypasses the retry loop entirely.
 	_no_sleep.assert_not_called()
 
@@ -877,9 +892,9 @@ def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
 def test_upload_pdf_raises_quota_exhausted_on_resource_exhausted_429():
 	import scorer
 
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
-		upload_pdf_to_gemini(b'pdf', 'paper.pdf', 'k')
+		_upload(b'pdf', 'paper.pdf', 'k')
 
 
 def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
@@ -888,7 +903,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(side_effect=scorer.GeminiQuotaExhausted('quota'))
 	with pytest.raises(scorer.GeminiQuotaExhausted, match='quota'):
-		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+		_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 
 @responses.activate
@@ -896,14 +911,14 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 	import scorer
 
 	responses.get(PDF_URL, body=b'pdf')
-	responses.post(summariser.GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
+	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
-	responses.post(summariser.GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	# PDF path raises quota exhausted; abstract fallback must not run.
 	with pytest.raises(scorer.GeminiQuotaExhausted):
-		summarise_paper(
+		_summarise(
 			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 			gemini_fn,
 			database_url='postgresql://x',
@@ -921,7 +936,7 @@ def test_summarise_paper_propagates_budget_exhausted_from_abstract_path(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(side_effect=scorer.GeminiBudgetExhausted('budget'))
 	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
-		summarise_paper({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+		_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 
 def test_summarise_paper_propagates_budget_exhausted_from_pdf_path(mocker):
@@ -936,7 +951,7 @@ def test_summarise_paper_propagates_budget_exhausted_from_pdf_path(mocker):
 	gemini_fn = mocker.Mock()
 
 	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
-		summarise_paper(
+		_summarise(
 			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 			gemini_fn,
 			database_url='postgresql://x',
