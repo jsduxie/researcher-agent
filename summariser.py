@@ -1,6 +1,5 @@
 import json
 import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -8,12 +7,9 @@ import requests
 
 import db
 from config import SUMMARISER_PROMPT, Config
-from scorer import GeminiBudgetExhausted, GeminiQuotaExhausted, _is_quota_exhausted
+from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_file, upload_pdf_to_gemini
 
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
-
-GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
-GEMINI_BACKOFF_DELAYS = (5, 15, 45)
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
@@ -28,14 +24,6 @@ class SummariserContext:
 	database_url: str | None = None
 	api_key: str | None = None
 	on_gemini_call: Callable | None = None
-
-
-def _generate_url(cfg):
-	return f'{cfg.gemini_base_url}/models/{cfg.gemini_model}:generateContent'
-
-
-def _files_upload_url(cfg):
-	return f'{cfg.gemini_upload_base_url}/files'
 
 
 def summarise_paper(paper, gemini_fn, ctx):
@@ -106,35 +94,6 @@ def _summarise_via_abstract(paper, gemini_fn, ctx):
 		return None
 
 
-def _retry_after_seconds(response):
-	# HTTP-date form (RFC 7231) is ignored; we fall back to exponential backoff rather than parse dates the API never sends.
-	header = response.headers.get('Retry-After')
-	if header is None:
-		return None
-	try:
-		return int(header)
-	except (TypeError, ValueError):
-		return None
-
-
-def _post_with_retry(url, on_attempt=None, **kwargs):
-	# Retries 429 and 5xx with backoff. After exhaustion returns the final failed response so the caller's raise_for_status surfaces consistently.
-	last = None
-	for attempt in range(len(GEMINI_BACKOFF_DELAYS) + 1):
-		if on_attempt:
-			on_attempt()
-		last = requests.post(url, **kwargs)
-		if last.status_code == 429 and _is_quota_exhausted(last):
-			raise GeminiQuotaExhausted('Gemini daily quota exhausted (PerDay quota violated)')
-		if last.status_code not in GEMINI_RETRY_STATUS_CODES:
-			return last
-		if attempt == len(GEMINI_BACKOFF_DELAYS):
-			return last
-		delay = _retry_after_seconds(last) or GEMINI_BACKOFF_DELAYS[attempt]
-		time.sleep(delay)
-	return last
-
-
 def download_pdf(url, max_size_bytes):
 	with requests.get(url, stream=True, timeout=60) as r:
 		r.raise_for_status()
@@ -147,58 +106,6 @@ def download_pdf(url, max_size_bytes):
 			if len(buffer) > max_size_bytes:
 				raise ValueError(f'PDF stream exceeded cap {max_size_bytes}')
 		return bytes(buffer)
-
-
-def upload_pdf_to_gemini(pdf_bytes, display_name, api_key, cfg, on_attempt=None):
-	# Resumable upload: first request gets an upload URL, second uploads the bytes. Auth on x-goog-api-key (not URL) so the key can't leak via HTTPError.
-	start_headers = {
-		'X-Goog-Upload-Protocol': 'resumable',
-		'X-Goog-Upload-Command': 'start',
-		'X-Goog-Upload-Header-Content-Length': str(len(pdf_bytes)),
-		'X-Goog-Upload-Header-Content-Type': 'application/pdf',
-		'Content-Type': 'application/json',
-		'x-goog-api-key': api_key,
-	}
-	# Files API upload-init is a Gemini API call; the signed-URL upload below is not.
-	start = _post_with_retry(
-		_files_upload_url(cfg),
-		on_attempt=on_attempt,
-		headers=start_headers,
-		json={'file': {'display_name': display_name}},
-		timeout=60,
-	)
-	start.raise_for_status()
-	upload_url = start.headers.get('X-Goog-Upload-URL')
-	if not upload_url:
-		raise ValueError('Upload start did not return X-Goog-Upload-URL header')
-
-	upload_headers = {
-		'Content-Length': str(len(pdf_bytes)),
-		'X-Goog-Upload-Offset': '0',
-		'X-Goog-Upload-Command': 'upload, finalize',
-	}
-	upload = _post_with_retry(upload_url, headers=upload_headers, data=pdf_bytes, timeout=120)
-	upload.raise_for_status()
-	try:
-		return upload.json()['file']['uri']
-	except (KeyError, TypeError) as e:
-		raise ValueError(f'Upload response missing file.uri: {e}') from e
-
-
-def generate_with_file(prompt, file_uri, api_key, cfg, on_attempt=None):
-	body = {
-		'contents': [
-			{'parts': [{'file_data': {'mime_type': 'application/pdf', 'file_uri': file_uri}}, {'text': prompt}]}
-		]
-	}
-	r = _post_with_retry(
-		_generate_url(cfg), on_attempt=on_attempt, headers={'x-goog-api-key': api_key}, json=body, timeout=120
-	)
-	r.raise_for_status()
-	try:
-		return r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-	except (KeyError, IndexError, TypeError) as e:
-		raise ValueError(f'Gemini response missing expected fields: {e}') from e
 
 
 def parse_summary_response(response_text):

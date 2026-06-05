@@ -9,10 +9,8 @@ from summariser import (
 	MISSING_FIELD_PLACEHOLDER,
 	SummariserContext,
 	download_pdf,
-	generate_with_file,
 	parse_summary_response,
 	summarise_paper,
-	upload_pdf_to_gemini,
 )
 
 # Tests share a single cfg derived from the seed file. URLs and the persisted model_version come from it so production builds match what `responses` mocks expect.
@@ -20,11 +18,9 @@ _TEST_CFG = config.Config(**config.load_seed())
 MODEL_VERSION = _TEST_CFG.gemini_model
 GEMINI_GENERATE_URL = f'{_TEST_CFG.gemini_base_url}/models/{_TEST_CFG.gemini_model}:generateContent'
 GEMINI_FILES_UPLOAD_URL = f'{_TEST_CFG.gemini_upload_base_url}/files'
+UPLOAD_TARGET = 'https://upload.example.com/sessions/abc'
 
-# Aliases so the bulk-replace below doesn't loop the wrappers back on themselves.
 _summarise_paper = summarise_paper
-_upload_pdf_to_gemini = upload_pdf_to_gemini
-_generate_with_file = generate_with_file
 
 
 def _ctx(**kwargs):
@@ -35,17 +31,10 @@ def _summarise(paper, gemini_fn, **kwargs):
 	return _summarise_paper(paper, gemini_fn, _ctx(**kwargs))
 
 
-def _upload(*args, **kwargs):
-	return _upload_pdf_to_gemini(*args, _TEST_CFG, **kwargs)
-
-
-def _generate(*args, **kwargs):
-	return _generate_with_file(*args, _TEST_CFG, **kwargs)
-
-
 @pytest.fixture(autouse=True)
 def _no_sleep(mocker):
-	return mocker.patch('summariser.time.sleep')
+	# Sleeps now live in the transport module.
+	return mocker.patch('gemini.time.sleep')
 
 
 @pytest.fixture(autouse=True)
@@ -403,16 +392,6 @@ def test_on_gemini_call_does_not_fire_when_pdf_fails_then_abstract_succeeds(mock
 
 
 @responses.activate
-def test_post_with_retry_fires_on_attempt_per_iteration_via__generate():
-	# Two 500s then success: on_attempt fires once per iteration of _post_with_retry.
-	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	counter = []
-	_generate('p', 'files/abc', 'k', on_attempt=lambda: counter.append(1))
-	assert len(counter) == 3
-
-
 # -- db session lifecycle inside summarise_paper --
 
 
@@ -493,193 +472,6 @@ def test_download_pdf_propagates_http_error():
 	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
 	with pytest.raises(requests.HTTPError):
 		download_pdf(PDF_URL, max_size_bytes=1024)
-
-
-# -- upload_pdf_to_gemini --
-
-
-UPLOAD_TARGET = 'https://upload.example.com/sessions/abc'
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'https://files/abc', 'name': 'files/abc'}})
-	assert _upload(b'pdf', 'paper.pdf', 'fake-key') == 'https://files/abc'
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs.
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
-	_upload(b'pdf', 'my-key-value', 'my-key-value-secret')
-	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-key-value-secret'
-	assert 'my-key-value-secret' not in responses.calls[0].request.url
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_sends_display_name_in_metadata():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
-	_upload(b'pdf', 'a-paper.pdf', 'k')
-	start_body = json.loads(responses.calls[0].request.body)
-	assert start_body == {'file': {'display_name': 'a-paper.pdf'}}
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_start_5xx():
-	for _ in range(4):
-		responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=500)
-	with pytest.raises(requests.HTTPError):
-		_upload(b'pdf', 'paper.pdf', 'k')
-	assert len(responses.calls) == 4
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_does_not_retry_start_on_400():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=400)
-	with pytest.raises(requests.HTTPError):
-		_upload(b'pdf', 'paper.pdf', 'k')
-	assert len(responses.calls) == 1
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_raises_when_no_upload_url_header():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={})
-	with pytest.raises(ValueError, match='X-Goog-Upload-URL'):
-		_upload(b'pdf', 'paper.pdf', 'k')
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_raises_after_retries_exhausted_on_upload_5xx():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	for _ in range(4):
-		responses.post(UPLOAD_TARGET, json={}, status=500)
-	with pytest.raises(requests.HTTPError):
-		_upload(b'pdf', 'paper.pdf', 'k')
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_retries_start_on_429_then_succeeds():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, status=429)
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/x'}})
-	assert _upload(b'pdf', 'paper.pdf', 'k') == 'files/x'
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_raises_when_response_missing_file_uri():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={'file': {}})
-	with pytest.raises(ValueError, match='missing file.uri'):
-		_upload(b'pdf', 'paper.pdf', 'k')
-
-
-@responses.activate
-def test_upload_pdf_to_gemini_raises_when_file_key_missing():
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
-	responses.post(UPLOAD_TARGET, json={})
-	with pytest.raises(ValueError, match='missing file.uri'):
-		_upload(b'pdf', 'paper.pdf', 'k')
-
-
-# -- generate_with_file --
-
-
-@responses.activate
-def test_generate_with_file_returns_text_on_happy_path():
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert _generate('prompt', 'files/abc', 'k') == 'ok'
-
-
-@responses.activate
-def test_generate_with_file_strips_response_whitespace():
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': '  ok  '}]}}]})
-	assert _generate('prompt', 'files/abc', 'k') == 'ok'
-
-
-@responses.activate
-def test_generate_with_file_sends_file_data_and_prompt_parts():
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	_generate('the-prompt', 'files/abc', 'k')
-	body = json.loads(responses.calls[0].request.body)
-	parts = body['contents'][0]['parts']
-	assert parts[0] == {'file_data': {'mime_type': 'application/pdf', 'file_uri': 'files/abc'}}
-	assert parts[1] == {'text': 'the-prompt'}
-
-
-@responses.activate
-def test_generate_with_file_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs.
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	_generate('prompt', 'files/abc', 'my-secret-key')
-	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'
-	assert 'my-secret-key' not in responses.calls[0].request.url
-
-
-@responses.activate
-def test_generate_with_file_raises_after_retries_exhausted_on_5xx():
-	for _ in range(4):
-		responses.post(GEMINI_GENERATE_URL, json={}, status=500)
-	with pytest.raises(requests.HTTPError):
-		_generate('p', 'files/abc', 'k')
-	assert len(responses.calls) == 4
-
-
-@responses.activate
-def test_generate_with_file_does_not_retry_on_400():
-	responses.post(GEMINI_GENERATE_URL, json={}, status=400)
-	with pytest.raises(requests.HTTPError):
-		_generate('p', 'files/abc', 'k')
-	assert len(responses.calls) == 1
-
-
-@responses.activate
-def test_generate_with_file_retries_on_429_then_succeeds():
-	responses.post(GEMINI_GENERATE_URL, json={}, status=429)
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert _generate('p', 'files/abc', 'k') == 'ok'
-	assert len(responses.calls) == 2
-
-
-@responses.activate
-def test_generate_with_file_retries_on_500_then_succeeds():
-	responses.post(GEMINI_GENERATE_URL, json={}, status=500)
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert _generate('p', 'files/abc', 'k') == 'ok'
-	assert len(responses.calls) == 2
-
-
-@responses.activate
-def test_generate_with_file_honours_retry_after_seconds(_no_sleep):
-	responses.post(GEMINI_GENERATE_URL, status=429, headers={'Retry-After': '11'})
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	_generate('p', 'files/abc', 'k')
-	# Retry-After is the only sleep this function triggers; the 11s override is honoured in place of the 5s default backoff for the first retry.
-	delays = [c.args[0] for c in _no_sleep.call_args_list]
-	assert delays == [11]
-
-
-@responses.activate
-def test_generate_with_file_raises_when_candidates_missing():
-	responses.post(GEMINI_GENERATE_URL, json={})
-	with pytest.raises(ValueError, match='missing expected fields'):
-		_generate('p', 'files/abc', 'k')
-
-
-@responses.activate
-def test_generate_with_file_raises_when_candidates_empty():
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': []})
-	with pytest.raises(ValueError, match='missing expected fields'):
-		_generate('p', 'files/abc', 'k')
-
-
-@responses.activate
-def test_generate_with_file_raises_when_text_field_missing():
-	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{}]}}]})
-	with pytest.raises(ValueError, match='missing expected fields'):
-		_generate('p', 'files/abc', 'k')
 
 
 # -- summarise_paper: PDF path integration --
@@ -882,34 +674,8 @@ _PER_DAY_429 = {
 
 
 @responses.activate
-def test_generate_with_file_raises_quota_exhausted_on_per_day_429():
-	import scorer
-
-	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
-	with pytest.raises(scorer.GeminiQuotaExhausted):
-		_generate('p', 'files/abc', 'k')
-
-
 @responses.activate
-def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
-	import scorer
-
-	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
-	with pytest.raises(scorer.GeminiQuotaExhausted):
-		_generate('p', 'files/abc', 'k')
-	# No backoff sleeps; quota detection bypasses the retry loop entirely.
-	_no_sleep.assert_not_called()
-
-
 @responses.activate
-def test_upload_pdf_raises_quota_exhausted_on_per_day_429():
-	import scorer
-
-	responses.post(GEMINI_FILES_UPLOAD_URL, json=_PER_DAY_429, status=429)
-	with pytest.raises(scorer.GeminiQuotaExhausted):
-		_upload(b'pdf', 'paper.pdf', 'k')
-
-
 def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
 	import scorer
 
