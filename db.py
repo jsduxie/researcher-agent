@@ -145,6 +145,48 @@ def needs_scoring(conn, paper_ids):
 		return {row[0] for row in cur.fetchall()}
 
 
+_LIST_UNSCORED_SQL = """
+SELECT
+	papers.paper_id,
+	papers.title,
+	papers.abstract,
+	papers.year,
+	papers.citation_count,
+	papers.url,
+	papers.doi,
+	papers.pdf_url,
+	COALESCE(
+		(SELECT array_agg(name ORDER BY position) FROM paper_authors WHERE paper_id = papers.paper_id),
+		ARRAY[]::TEXT[]
+	) AS authors
+FROM papers
+WHERE scored_at IS NULL AND score_attempts < %s AND NOT (paper_id = ANY(%s))
+ORDER BY fetched_at DESC
+LIMIT %s
+"""
+
+
+def list_unscored(conn, exclude_ids, max_attempts, limit):
+	# Rows come back in the Semantic Scholar dict shape so swept papers flow through scoring, summarising and rendering unchanged.
+	with conn.cursor() as cur:
+		cur.execute(_LIST_UNSCORED_SQL, (max_attempts, list(exclude_ids), limit))
+		rows = cur.fetchall()
+	return [
+		{
+			'paperId': paper_id,
+			'title': title,
+			'abstract': abstract,
+			'year': year,
+			'citationCount': citation_count,
+			'url': url,
+			'externalIds': {'DOI': doi} if doi else {},
+			'openAccessPdf': {'url': pdf_url} if pdf_url else None,
+			'authors': [{'name': name} for name in authors],
+		}
+		for paper_id, title, abstract, year, citation_count, url, doi, pdf_url, authors in rows
+	]
+
+
 def get_summary(conn, paper_id):
 	with conn.cursor() as cur:
 		cur.execute(

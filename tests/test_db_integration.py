@@ -268,6 +268,31 @@ def test_needs_scoring_returns_empty_when_no_matching_rows_exist(conn):
 	assert db.needs_scoring(conn, ['never-upserted']) == set()
 
 
+# -- list_unscored --
+
+
+def test_list_unscored_sweeps_only_eligible_papers_in_api_shape(conn):
+	db.upsert_paper(conn, {'paperId': 'unscored', 'title': 't', 'authors': [{'name': 'A One'}]})
+	db.upsert_paper(conn, {'paperId': 'scored'})
+	db.upsert_paper(conn, {'paperId': 'exhausted'})
+	db.upsert_paper(conn, {'paperId': 'current-fetch'})
+	db.mark_scoring_results(conn, attempted=['scored'], responded={'scored'})
+	for _ in range(3):
+		db.mark_scoring_results(conn, attempted=['exhausted'], responded=set())
+
+	papers = db.list_unscored(conn, exclude_ids=['current-fetch'], max_attempts=3, limit=10)
+
+	assert [p['paperId'] for p in papers] == ['unscored']
+	assert papers[0]['title'] == 't'
+	assert papers[0]['authors'] == [{'name': 'A One'}]
+
+
+def test_list_unscored_respects_limit(conn):
+	for i in range(3):
+		db.upsert_paper(conn, {'paperId': f'p{i}'})
+	assert len(db.list_unscored(conn, exclude_ids=[], max_attempts=3, limit=2)) == 2
+
+
 # -- mark_scoring_results --
 
 

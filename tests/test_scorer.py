@@ -202,14 +202,14 @@ def test_score_chunk_returns_enriched_papers_on_happy_path(mocker):
 
 def test_score_and_summarise_empty_input(mocker):
 	gemini_fn = mocker.Mock()
-	assert score_and_summarise([], gemini_fn, _TEST_CFG) == ([], set())
+	assert score_and_summarise([], gemini_fn, _TEST_CFG) == ([], set(), set())
 	gemini_fn.assert_not_called()
 
 
 def test_score_and_summarise_single_small_batch(mocker):
 	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([{'title': 'x'}], {'x'}))
 	gemini_fn = mocker.Mock()
-	enriched, responded = score_and_summarise([{'title': 'p'}], gemini_fn, _TEST_CFG)
+	enriched, responded, _ = score_and_summarise([{'title': 'p'}], gemini_fn, _TEST_CFG)
 	assert enriched == [{'title': 'x'}]
 	assert responded == {'x'}
 	mock_chunk.assert_called_once()
@@ -219,7 +219,7 @@ def test_score_and_summarise_multiple_batches(mocker):
 	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg: (c, set()))
 	gemini_fn = mocker.Mock()
 	papers = [{'i': i} for i in range(BATCH_SIZE * 2 + 3)]
-	enriched, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
+	enriched, _, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert len(enriched) == len(papers)
 	assert mock_chunk.call_count == 3
 	call_sizes = [len(call.args[0]) for call in mock_chunk.call_args_list]
@@ -239,7 +239,7 @@ def test_score_and_summarise_unions_responded_across_batches(mocker):
 	mocker.patch('scorer._score_chunk', side_effect=[([], {'p1'}), ([], {'p2', 'p3'})])
 	gemini_fn = mocker.Mock()
 	papers = [{'i': i} for i in range(BATCH_SIZE + 1)]
-	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert enriched == []
 	assert responded == {'p1', 'p2', 'p3'}
 
@@ -252,7 +252,7 @@ def test_score_and_summarise_rescores_failed_batch_in_second_pass(mocker, capsys
 	papers = [{'paperId': 'p1'}, {'paperId': 'p2'}]
 	scored = [dict(p, ai_score=8) for p in papers]
 	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=[([], set()), (scored, {'p1', 'p2'})])
-	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert mock_chunk.call_args_list[1].args[0] == papers
 	assert enriched == scored
@@ -288,7 +288,7 @@ def test_score_and_summarise_second_pass_halt_preserves_first_pass_results(mocke
 	papers = [{'paperId': 'p1'}, {'paperId': 'p2'}]
 	first = [{'paperId': 'p1', 'ai_score': 9}]
 	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=[(first, {'p1'}), GeminiQuotaExhausted('quota')])
-	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert enriched == first
 	assert responded == {'p1'}
@@ -299,9 +299,37 @@ def test_score_and_summarise_runs_exactly_one_recovery_pass(mocker):
 	# Papers that stay unresponded after the second pass wait for the next run; no third pass.
 	papers = [{'paperId': 'p1'}]
 	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([], set()))
-	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert (enriched, responded) == ([], set())
+
+
+# -- attempted set semantics --
+
+
+def test_score_and_summarise_attempted_includes_unresponded_papers_in_sent_batches(mocker):
+	# Sent but unanswered still consumed a real Gemini call; it must count towards score_attempts.
+	papers = [{'paperId': 'p1'}]
+	mocker.patch('scorer._score_chunk', return_value=([], set()))
+	_, _, attempted = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert attempted == {'p1'}
+
+
+def test_score_and_summarise_attempted_excludes_batches_after_halt(mocker):
+	# Papers in batches the halt prevented from being sent must stay eligible for future sweeps.
+	papers = [{'paperId': f'p{i}'} for i in range(BATCH_SIZE + 2)]
+	mocker.patch(
+		'scorer._score_chunk', side_effect=[([], {f'p{i}' for i in range(BATCH_SIZE)}), GeminiQuotaExhausted('quota')]
+	)
+	_, _, attempted = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert attempted == {f'p{i}' for i in range(BATCH_SIZE)}
+
+
+def test_score_and_summarise_attempted_empty_when_first_batch_halts(mocker):
+	papers = [{'paperId': 'p1'}]
+	mocker.patch('scorer._score_chunk', side_effect=GeminiBudgetExhausted('budget'))
+	_, _, attempted = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert attempted == set()
 
 
 # -- gemini (HTTP) --
@@ -651,7 +679,7 @@ def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
 	)
 	gemini_fn = mocker.Mock()
 	papers = [{'paperId': f'p{i}'} for i in range(BATCH_SIZE * 3)]
-	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
 	assert responded == {'p1'}
@@ -725,7 +753,7 @@ def test_score_and_summarise_short_circuits_on_budget_exhausted(mocker, capsys):
 	)
 	gemini_fn = mocker.Mock()
 	papers = [{'paperId': f'p{i}'} for i in range(BATCH_SIZE * 3)]
-	enriched, responded = score_and_summarise(papers, gemini_fn, _TEST_CFG)
+	enriched, responded, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
 	assert mock_chunk.call_count == 2
 	assert enriched == [{'paperId': 'p1', 'ai_score': 8}]
 	assert responded == {'p1'}

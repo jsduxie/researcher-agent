@@ -37,6 +37,7 @@ def mock_db(mocker):
 		'upsert_paper': mocker.patch('main.db.upsert_paper', return_value=True),
 		'record_run_papers': mocker.patch('main.db.record_run_papers'),
 		'needs_scoring': mocker.patch('main.db.needs_scoring', side_effect=lambda conn, ids: set(ids)),
+		'list_unscored': mocker.patch('main.db.list_unscored', return_value=[]),
 		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
 	}
@@ -47,7 +48,7 @@ def mock_io(mocker):
 	return {
 		'fetch': mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}]),
 		'score': mocker.patch(
-			'main.scorer.score_and_summarise', return_value=([{'paperId': 'p1', 'ai_score': 8}], {'p1'})
+			'main.scorer.score_and_summarise', return_value=([{'paperId': 'p1', 'ai_score': 8}], {'p1'}, {'p1'})
 		),
 		'summarise': mocker.patch(
 			'main.summariser.summarise_paper',
@@ -163,7 +164,7 @@ def test_live_run_only_scores_papers_needs_scoring_reports_as_unscored(mock_db, 
 
 
 def test_live_run_marks_scoring_results_with_attempted_and_responded(mock_db, mock_io):
-	mock_io['score'].return_value = ([{'paperId': 'p1', 'ai_score': 8}], {'p1'})
+	mock_io['score'].return_value = ([{'paperId': 'p1', 'ai_score': 8}], {'p1'}, {'p1'})
 	main.main([])
 	mock_db['mark_scoring_results'].assert_called_once()
 	call = mock_db['mark_scoring_results'].call_args
@@ -181,8 +182,44 @@ def test_live_run_does_not_call_mark_scoring_results_when_nothing_needs_scoring(
 	assert scored == []
 
 
+# -- unscored backlog sweep --
+
+
+def test_live_run_sweeps_unscored_backlog_into_scoring(mock_db, mock_io, mocker):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}])
+	backlog_paper = {'paperId': 'old1', 'title': 'stale', 'abstract': 'a'}
+	mock_db['list_unscored'].return_value = [backlog_paper]
+	main.main([])
+	scored = mock_io['score'].call_args.args[0]
+	assert backlog_paper in scored
+	assert {'paperId': 'p1'} in scored
+
+
+def test_live_run_passes_sweep_filters_to_list_unscored(mock_db, mock_io):
+	main.main([])
+	call = mock_db['list_unscored'].call_args
+	assert call.args[0] is mock_db['conn']
+	assert call.kwargs['exclude_ids'] == ['p1']
+	assert call.kwargs['max_attempts'] == main.SWEEP_MAX_ATTEMPTS
+	assert call.kwargs['limit'] == 2 * _TEST_CFG.batch_size
+
+
+def test_live_run_logs_backlog_count(mock_db, mock_io, capsys):
+	mock_db['list_unscored'].return_value = [{'paperId': 'old1'}]
+	main.main([])
+	assert 'backlog=1' in capsys.readouterr().out
+
+
+def test_live_run_marks_attempts_from_scorer_not_scoring_input(mock_db, mock_io, mocker):
+	# Papers in batches a halt prevented from being sent must not gain score_attempts they never used.
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}])
+	mock_io['score'].return_value = ([], set(), {'p1'})
+	main.main([])
+	assert mock_db['mark_scoring_results'].call_args.kwargs['attempted'] == ['p1']
+
+
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 	main.main([])
 	mock_db['finish_run'].assert_called_once_with(mock_db['conn'], 42, 0, len(SEARCH_QUERIES), 0)
 	mock_io['send'].assert_not_called()
@@ -237,8 +274,8 @@ def test_live_run_does_not_finish_run_when_upsert_crashes_mid_pipeline(mock_db, 
 
 
 def test_live_run_marks_scoring_results_even_when_scorer_returns_empty(mock_db, mock_io):
-	# Simulates a Gemini batch failure: scorer returns ([], set()). Attempts are still recorded in score_attempts; scored_at stays NULL so a later run re-tries.
-	mock_io['score'].return_value = ([], set())
+	# A sent batch that yields nothing still counts as attempted; scored_at stays NULL so a later run re-tries.
+	mock_io['score'].return_value = ([], set(), {'p1'})
 
 	main.main([])
 
@@ -254,7 +291,7 @@ def test_live_run_exits_nonzero_when_all_queries_error(mock_db, mock_io, mocker,
 	from fetcher import FetchError
 
 	mocker.patch('main.fetch_papers', side_effect=FetchError('rate limited'))
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 
 	with pytest.raises(SystemExit) as exc:
 		main.main([])
@@ -285,7 +322,7 @@ def test_live_run_proceeds_when_some_queries_succeed(mock_db, mock_io, mocker):
 
 def test_live_run_exits_zero_when_no_results_but_no_errors(mock_db, mock_io):
 	mock_io['fetch'].return_value = []
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 
 	main.main([])  # no SystemExit
 
@@ -360,7 +397,7 @@ def test_live_run_drops_papers_without_paper_id_before_persisting(mock_db, mock_
 def test_live_run_keeps_running_when_every_paper_lacks_paper_id(mock_db, mock_io, mocker, capsys):
 	# Edge case: all fetched papers are missing paperId. The pipeline drops them, logs, and finishes cleanly without ever calling upsert.
 	mocker.patch('main.fetch_papers', return_value=[{'title': 'one'}, {'title': 'two'}])
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 
 	main.main([])
 
@@ -467,14 +504,14 @@ def test_live_run_summarises_each_enriched_paper(mock_db, mock_io):
 
 def test_live_run_summarises_only_papers_above_threshold(mock_db, mock_io):
 	# Scorer returns a single enriched paper; even if more were scored, only those past the relevance filter should be summarised.
-	mock_io['score'].return_value = ([{'paperId': 'kept', 'ai_score': 8}], {'kept', 'dropped'})
+	mock_io['score'].return_value = ([{'paperId': 'kept', 'ai_score': 8}], {'kept', 'dropped'}, {'kept', 'dropped'})
 	main.main([])
 	mock_io['summarise'].assert_called_once()
 	assert mock_io['summarise'].call_args.args[0]['paperId'] == 'kept'
 
 
 def test_live_run_does_not_summarise_when_no_papers_kept(mock_db, mock_io):
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 	main.main([])
 	mock_io['summarise'].assert_not_called()
 
@@ -550,7 +587,7 @@ def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
 	# needs_scoring returns empty so new_papers=[] (Phase C skipped); scorer also receives [] so nothing is kept and Phase D's summariser sessions don't run.
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 	main.main([])
 	# 1 (config-load) + 1 (A) + 0 (C) + 1 (E) = 3.
 	assert mock_db['session'].call_count == 3
@@ -627,7 +664,7 @@ def test_summarise_kept_papers_halts_on_quota_exhausted_and_preserves_earlier_fi
 	p1 = {'paperId': 'p1', 'ai_score': 9}
 	p2 = {'paperId': 'p2', 'ai_score': 8}
 	p3 = {'paperId': 'p3', 'ai_score': 7}
-	mock_io['score'].return_value = ([p1, p2, p3], {'p1', 'p2', 'p3'})
+	mock_io['score'].return_value = ([p1, p2, p3], {'p1', 'p2', 'p3'}, {'p1', 'p2', 'p3'})
 
 	summary = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
 	mock_io['summarise'].side_effect = [summary, scorer_module.GeminiQuotaExhausted('quota'), summary]
@@ -714,6 +751,7 @@ def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_
 		return (
 			[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
 			{'a', 'b', 'c'},
+			{'a', 'b', 'c'},
 		)
 
 	mock_io['score'].side_effect = consume_then_score
@@ -738,6 +776,7 @@ def test_summarise_kept_papers_stops_mid_loop_when_count_crosses_cap(mock_db, mo
 	mock_io['score'].return_value = (
 		[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
 		{'a', 'b', 'c'},
+		{'a', 'b', 'c'},
 	)
 
 	def fake_summarise(paper, gemini_fn, ctx):
@@ -757,7 +796,7 @@ def test_summarise_kept_papers_stops_mid_loop_when_count_crosses_cap(mock_db, mo
 def test_live_run_does_not_crash_when_budget_zero(mock_db, mock_io, mocker):
 	# Defensive: if the budget is mis-set to 0, scorer batches get refused, summariser never runs, the pipeline still finishes the run cleanly.
 	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=0)
-	mock_io['score'].return_value = ([], set())
+	mock_io['score'].return_value = ([], set(), set())
 
 	main.main([])
 

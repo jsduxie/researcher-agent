@@ -330,6 +330,55 @@ def test_needs_scoring_propagates_database_error(mock_conn):
 		db.needs_scoring(mock_conn, ['p1'])
 
 
+# -- list_unscored --
+
+
+def _unscored_row(paper_id='p1', doi='10.1/x', pdf_url='http://pdf', authors=('A One',)):
+	return (paper_id, 't', 'a', 2024, 5, 'http://u', doi, pdf_url, list(authors))
+
+
+def test_list_unscored_filters_on_attempts_exclusions_and_limit(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.list_unscored(mock_conn, exclude_ids=['p9'], max_attempts=3, limit=20)
+	sql, params = _cursor(mock_conn).execute.call_args.args
+	assert 'scored_at IS NULL' in sql
+	assert 'score_attempts < %s' in sql
+	assert 'NOT (paper_id = ANY(%s))' in sql
+	assert 'LIMIT %s' in sql
+	assert params == (3, ['p9'], 20)
+
+
+def test_list_unscored_maps_rows_to_semantic_scholar_shape(mock_conn):
+	# The scoring pipeline expects fetcher-shaped dicts; swept rows must be indistinguishable from fresh fetches.
+	_cursor(mock_conn).fetchall.return_value = [_unscored_row()]
+	[paper] = db.list_unscored(mock_conn, exclude_ids=[], max_attempts=3, limit=20)
+	assert paper == {
+		'paperId': 'p1',
+		'title': 't',
+		'abstract': 'a',
+		'year': 2024,
+		'citationCount': 5,
+		'url': 'http://u',
+		'externalIds': {'DOI': '10.1/x'},
+		'openAccessPdf': {'url': 'http://pdf'},
+		'authors': [{'name': 'A One'}],
+	}
+
+
+def test_list_unscored_omits_doi_and_pdf_when_absent(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [_unscored_row(doi=None, pdf_url=None, authors=())]
+	[paper] = db.list_unscored(mock_conn, exclude_ids=[], max_attempts=3, limit=20)
+	assert paper['externalIds'] == {}
+	assert paper['openAccessPdf'] is None
+	assert paper['authors'] == []
+
+
+def test_list_unscored_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('sweep boom')
+	with pytest.raises(RuntimeError, match='sweep boom'):
+		db.list_unscored(mock_conn, exclude_ids=[], max_attempts=3, limit=20)
+
+
 # -- mark_scoring_results --
 
 

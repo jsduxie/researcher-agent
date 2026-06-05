@@ -19,6 +19,8 @@ GEMINI_CALL_COUNT = 0
 # Populated from cfg.gemini_call_budget at the top of main() so tests can still patch this module attribute directly without touching cfg.
 GEMINI_CALL_BUDGET = 0
 _CFG = None
+# Papers swept from the backlog stop being retried after this many real Gemini attempts.
+SWEEP_MAX_ATTEMPTS = 3
 
 # Contract enforced by tests/test_workflow_env.py against the send-digest step.
 REQUIRED_ENV_VARS = (
@@ -129,15 +131,22 @@ def _persist_fetched_papers(database_url, unique):
 		roster = [(p['paperId'], db.upsert_paper(conn, p)) for p in unique]
 		db.record_run_papers(conn, run_id, roster)
 		unscored = db.needs_scoring(conn, paper_ids)
+		# Two batches a run drains the unscored backlog steadily without dominating the call budget.
+		backlog = db.list_unscored(
+			conn, exclude_ids=paper_ids, max_attempts=SWEEP_MAX_ATTEMPTS, limit=2 * _CFG.batch_size
+		)
 		new_papers = [p for p in unique if p['paperId'] in unscored]
-	print(f'Persisted fetched papers: run_id={run_id}, upserted={len(unique)}, needs_scoring={len(new_papers)}')
-	return run_id, new_papers
+	print(
+		f'Persisted fetched papers: run_id={run_id}, upserted={len(unique)}, '
+		f'needs_scoring={len(new_papers)}, backlog={len(backlog)}'
+	)
+	return run_id, new_papers + backlog
 
 
-def _record_scoring_attempts(database_url, new_papers, responded):
+def _record_scoring_attempts(database_url, attempted, responded):
 	with db.session(database_url) as conn:
-		db.mark_scoring_results(conn, attempted=[p['paperId'] for p in new_papers], responded=responded)
-	print(f'Recorded scoring attempts: attempted={len(new_papers)}, responded={len(responded)}')
+		db.mark_scoring_results(conn, attempted=list(attempted), responded=responded)
+	print(f'Recorded scoring attempts: attempted={len(attempted)}, responded={len(responded)}')
 
 
 def _finalise_run(database_url, run_id, papers_kept, queries_attempted, queries_errored):
@@ -188,12 +197,12 @@ def main(argv=None):
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
 	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
-	enriched, responded = scorer.score_and_summarise(new_papers, _gemini_score, _CFG)
+	enriched, responded, attempted = scorer.score_and_summarise(new_papers, _gemini_score, _CFG)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={_CFG.relevance_threshold}/10).')
 
 	if database_url is not None and new_papers:
-		_record_scoring_attempts(database_url, new_papers, responded)
+		_record_scoring_attempts(database_url, attempted, responded)
 
 	# Per-paper summarisation. Each call manages its own short DB sessions internally.
 	_summarise_kept_papers(enriched, database_url)

@@ -156,26 +156,29 @@ def apply_scores(papers, scores, threshold):
 
 
 def score_and_summarise(papers, gemini_fn, cfg):
+	# Returns (enriched, responded, attempted) sets of paper ids; attempted only covers batches Gemini actually saw.
 	if not papers:
-		return [], set()
+		return [], set(), set()
 
-	enriched, responded, halted = _score_batches(papers, gemini_fn, cfg)
+	enriched, responded, attempted, halted = _score_batches(papers, gemini_fn, cfg)
 
 	# Re-batch unanswered papers once at the end; id-less papers are skipped because responded can never contain them.
 	missed = [] if halted else [p for p in papers if p.get('paperId') and p['paperId'] not in responded]
 	if missed:
 		print(f'Rescoring {len(missed)} unresponded paper(s) in a second pass...')
-		more_enriched, more_responded, _ = _score_batches(missed, gemini_fn, cfg)
+		more_enriched, more_responded, more_attempted, _ = _score_batches(missed, gemini_fn, cfg)
 		enriched.extend(more_enriched)
 		responded.update(more_responded)
+		attempted.update(more_attempted)
 
-	return enriched, responded
+	return enriched, responded, attempted
 
 
 def _score_batches(papers, gemini_fn, cfg):
 	# halted means quota or budget stopped the run; callers must not send further Gemini work.
 	enriched = []
 	responded = set()
+	attempted = set()
 	batch_size = cfg.batch_size
 	for chunk_start in range(0, len(papers), batch_size):
 		chunk = papers[chunk_start : chunk_start + batch_size]
@@ -184,14 +187,16 @@ def _score_batches(papers, gemini_fn, cfg):
 			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn, cfg)
 		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting remaining batches: {e}')
-			return enriched, responded, True
+			return enriched, responded, attempted, True
 		except GeminiBudgetExhausted as e:
 			print(f'Budget exhausted, halting remaining batches: {e}')
-			return enriched, responded, True
+			return enriched, responded, attempted, True
 		enriched.extend(chunk_enriched)
 		responded.update(chunk_responded)
+		# Halted batches are excluded so their papers stay eligible for future sweeps.
+		attempted.update(p['paperId'] for p in chunk if p.get('paperId'))
 
-	return enriched, responded, False
+	return enriched, responded, attempted, False
 
 
 def _score_chunk(papers, gemini_fn, cfg):
