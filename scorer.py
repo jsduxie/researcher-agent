@@ -13,7 +13,7 @@ _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
-# API-side halt: Gemini returned RESOURCE_EXHAUSTED, meaning the daily RPD or RPM quota is gone and no further calls will succeed until the window resets.
+# API-side halt: a PerDay quota violation means no call can succeed until the daily window resets, so the whole run stops calling Gemini.
 class GeminiQuotaExhausted(Exception):
 	pass
 
@@ -23,14 +23,38 @@ class GeminiBudgetExhausted(Exception):
 	pass
 
 
-def _is_quota_exhausted(response):
-	# Google's RESOURCE_EXHAUSTED status is the canonical RPD/RPM exhaustion signal.
+def _error_details(response):
 	try:
-		if (response.json().get('error') or {}).get('status') == 'RESOURCE_EXHAUSTED':
-			return True
+		details = (response.json().get('error') or {}).get('details')
 	except (ValueError, AttributeError):
-		pass
-	return 'RESOURCE_EXHAUSTED' in (response.text or '')
+		return []
+	return details if isinstance(details, list) else []
+
+
+def _is_quota_exhausted(response):
+	# Gemini reports daily, per-minute and burst limits all as 429 RESOURCE_EXHAUSTED; only a PerDay quotaId is terminal, the rest recover within the run.
+	for detail in _error_details(response):
+		if not isinstance(detail, dict):
+			continue
+		for violation in detail.get('violations') or []:
+			if isinstance(violation, dict) and 'PerDay' in (violation.get('quotaId') or ''):
+				return True
+	# Substring fallback covers bodies that arrive truncated or as plain text rather than parseable JSON.
+	return 'PerDay' in (response.text or '')
+
+
+def _retry_delay_seconds(response):
+	# Server-provided RetryInfo.retryDelay (e.g. '39s') is better-informed than our fixed schedule.
+	for detail in _error_details(response):
+		if not isinstance(detail, dict):
+			continue
+		delay = detail.get('retryDelay')
+		if isinstance(delay, str) and delay.endswith('s'):
+			try:
+				return float(delay[:-1])
+			except ValueError:
+				continue
+	return None
 
 
 def gemini_url(cfg):
@@ -61,10 +85,10 @@ def gemini(prompt, api_key, cfg, retries=3, on_attempt=None):
 		time.sleep(5)
 		r = requests.post(url, headers=headers, json=body, timeout=120)
 		if r.status_code == 429 and _is_quota_exhausted(r):
-			raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
+			raise GeminiQuotaExhausted('Gemini daily quota exhausted (PerDay quota violated)')
 		if r.status_code in GEMINI_RETRY_STATUS_CODES:
 			last_status = r.status_code
-			wait = _retry_after_seconds(r) or 15 * (attempt + 1)
+			wait = _retry_after_seconds(r) or _retry_delay_seconds(r) or 15 * (attempt + 1)
 			print(f'Gemini {r.status_code}, retrying in {wait}s')
 			time.sleep(wait)
 			continue
