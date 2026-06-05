@@ -21,7 +21,7 @@ Copy `.env.example` to `.env` for local use. Every variable except `DATABASE_URL
 
 ## Configuration
 
-Pipeline behaviour lives in `config/digest.yaml`. Gemini-facing keys:
+Pipeline behaviour lives in the `app_config` table in Neon, edited from the dashboard's Configuration page. On a fresh database the table is seeded from `config/digest.example.yaml`; after that, the file is only an example and Neon is the source of truth. Gemini-facing keys:
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -29,7 +29,7 @@ Pipeline behaviour lives in `config/digest.yaml`. Gemini-facing keys:
 | `gemini_base_url` | `https://generativelanguage.googleapis.com/v1beta` | Base URL for `generateContent` |
 | `gemini_upload_base_url` | `https://generativelanguage.googleapis.com/upload/v1beta` | Base URL for the Files API resumable upload |
 
-Swap the model by editing `gemini_model`; the scorer and summariser pick it up on next run with no code change.
+Swap the model by editing `gemini_model` on the Configuration page; the scorer and summariser pick it up on the next run with no code change.
 
 ## Running tests with coverage
 
