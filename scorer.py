@@ -129,7 +129,8 @@ def apply_scores(papers, scores, threshold):
 	enriched = []
 	responded = set()
 	for i, paper in enumerate(papers):
-		title = paper.get('title', '')[:60]
+		# covers an explicit null title from the API, which .get's default cannot.
+		title = (paper.get('title') or '')[:60]
 		data = results_by_index.get(i)
 		if data is None:
 			print(f'Missing result for [{i}]: {title}')

@@ -145,6 +145,14 @@ def test_apply_scores_bool_score_drops_paper(capsys):
 	assert 'invalid score' in capsys.readouterr().out
 
 
+def test_apply_scores_handles_explicit_none_title():
+	# Semantic Scholar can return title: null; slicing None must not take down the run.
+	papers = [{'paperId': 'p1', 'title': None, 'abstract': 'a'}]
+	enriched, responded = apply_scores(papers, [_valid_score(0, 8)], threshold=6)
+	assert len(enriched) == 1
+	assert responded == {'p1'}
+
+
 def test_apply_scores_float_score_drops_paper(capsys):
 	# Downstream rendering requires int; refuse floats rather than coerce silently.
 	papers = [{'title': 'p'}]
