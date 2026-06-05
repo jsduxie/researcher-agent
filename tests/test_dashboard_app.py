@@ -581,3 +581,81 @@ def test_form_submit_skips_summary_feedback_for_missing_fields(stub_db):
 	assert stub_db['insert_feedback'].call_args.args[2] == 'methodology'
 	# Overall rating is still recorded even when only one section is rendered.
 	stub_db['insert_rating'].assert_called_once()
+
+
+# -- HTML escaping of upstream strings (PR #32 review) --
+
+_HOSTILE = '<script>alert(1)</script>'
+_HOSTILE_ESCAPED = '&lt;script&gt;alert(1)&lt;/script&gt;'
+
+
+def _click_title(at, label):
+	(title_button,) = [b for b in at.button if b.label == label]
+	title_button.click().run()
+	return at
+
+
+def test_modal_escapes_title_html(stub_db):
+	stub_db['search'].return_value = [_make_paper(title=_HOSTILE)]
+	stub_db['count'].return_value = 1
+	at = _click_title(AppTest.from_file(_APP_PATH).run(), _HOSTILE)
+	modal_titles = [m.value for m in at.markdown if 'class="modal-title"' in m.value]
+	assert any(_HOSTILE_ESCAPED in m for m in modal_titles)
+	assert not any(_HOSTILE in m for m in modal_titles)
+
+
+def test_modal_escapes_authors_abstract_and_summary_fields(stub_db):
+	stub_db['search'].return_value = [_make_paper(authors=['<b>Eve</b>'], abstract='<i>abs</i>', methodology=_HOSTILE)]
+	stub_db['count'].return_value = 1
+	at = _click_title(AppTest.from_file(_APP_PATH).run(), 'Attention Is All You Need')
+	authors_blocks = [m.value for m in at.markdown if 'class="modal-authors"' in m.value]
+	body_blocks = [m.value for m in at.markdown if 'class="section-body"' in m.value]
+	assert any('&lt;b&gt;Eve&lt;/b&gt;' in m for m in authors_blocks)
+	assert any('&lt;i&gt;abs&lt;/i&gt;' in m for m in body_blocks)
+	assert any(_HOSTILE_ESCAPED in m for m in body_blocks)
+	assert not any(_HOSTILE in m for m in body_blocks)
+
+
+def test_modal_escapes_doi_in_meta(stub_db):
+	stub_db['search'].return_value = [_make_paper(doi='10.1/<svg onload=x>')]
+	stub_db['count'].return_value = 1
+	at = _click_title(AppTest.from_file(_APP_PATH).run(), 'Attention Is All You Need')
+	modal_meta = [m.value for m in at.markdown if 'class="modal-meta"' in m.value]
+	assert any('10.1/&lt;svg onload=x&gt;' in m for m in modal_meta)
+
+
+def test_modal_action_links_escape_href_and_add_noopener(stub_db):
+	# A quote in the URL must not break out of the href attribute; target=_blank links carry rel to prevent reverse-tabnabbing.
+	hostile_url = 'https://example/p1?q="><script>x</script>'
+	stub_db['search'].return_value = [_make_paper(url=hostile_url)]
+	stub_db['count'].return_value = 1
+	at = _click_title(AppTest.from_file(_APP_PATH).run(), 'Attention Is All You Need')
+	action_blocks = [m.value for m in at.markdown if 'class="modal-actions"' in m.value]
+	assert any('href="https://example/p1?q=&quot;&gt;&lt;script&gt;x&lt;/script&gt;"' in m for m in action_blocks)
+	assert any('rel="noopener noreferrer"' in m for m in action_blocks)
+	assert not any('<script>' in m for m in action_blocks)
+
+
+def test_row_escapes_author_names(stub_db):
+	stub_db['search'].return_value = [_make_paper(authors=['<b>Eve</b>'])]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	row_meta = [m.value for m in at.markdown if 'class="row-meta"' in m.value]
+	assert any('&lt;b&gt;Eve&lt;/b&gt;' in m for m in row_meta)
+	assert not any('<b>Eve</b>' in m for m in row_meta)
+
+
+def test_row_renders_no_authors_placeholder_when_authors_empty(stub_db):
+	stub_db['search'].return_value = [_make_paper(authors=[])]
+	stub_db['count'].return_value = 1
+	at = AppTest.from_file(_APP_PATH).run()
+	row_meta = [m.value for m in at.markdown if 'class="row-meta"' in m.value]
+	assert any(_COPY['authors']['none'] in m for m in row_meta)
+
+
+def test_modal_omits_meta_row_when_paper_has_no_meta_fields(stub_db):
+	sparse = _make_paper(year=None, citation_count=None, latest_rating=None, doi=None)
+	stub_db['search'].return_value = [sparse]
+	stub_db['count'].return_value = 1
+	at = _click_title(AppTest.from_file(_APP_PATH).run(), 'Attention Is All You Need')
+	assert not any('class="modal-meta"' in m.value for m in at.markdown)
