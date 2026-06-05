@@ -6,11 +6,11 @@ import responses
 
 import config
 import db
+import gemini
 import main
-import scorer
 
 # main seeds app_config from the seed file on a clean DB, so the URL its Gemini calls hit is the seed-derived one.
-GEMINI_URL = scorer.gemini_url(config.Config(**config.load_seed()))
+GEMINI_URL = gemini.generate_url(config.Config(**config.load_seed()))
 
 _DATABASE_URL_TEST = os.environ.get('DATABASE_URL_TEST')
 
@@ -97,7 +97,7 @@ def test_main_survives_when_every_gemini_call_returns_429(clean_db, env, mocker)
 	mocker.patch('main.fetch_papers', return_value=papers)
 	mocker.patch('main.emailer.send_email')
 	# Speed: zero out the retry sleeps so the test doesn't spend ~75s in backoff.
-	mocker.patch('scorer.time.sleep')
+	mocker.patch('gemini.time.sleep')
 	responses.add(responses.POST, GEMINI_URL, json={'error': 'rate limited'}, status=429)
 
 	# Should not raise.

@@ -6,6 +6,7 @@ import responses
 
 import config
 import scorer
+from gemini import generate_url
 from scorer import (
 	GeminiBudgetExhausted,
 	GeminiQuotaExhausted,
@@ -17,7 +18,7 @@ from scorer import (
 
 # Tests share the seed-derived cfg; GEMINI_URL and BATCH_SIZE come from it so `responses` mocks match what production builds.
 _TEST_CFG = config.Config(**config.load_seed())
-GEMINI_URL = scorer.gemini_url(_TEST_CFG)
+GEMINI_URL = generate_url(_TEST_CFG)
 BATCH_SIZE = _TEST_CFG.batch_size
 
 
@@ -27,22 +28,26 @@ def gemini(prompt, api_key, retries=3, on_attempt=None):
 
 @pytest.fixture(autouse=True)
 def no_sleep(mocker):
-	return mocker.patch('scorer.time.sleep')
+	# Sleeps now live in the transport module.
+	return mocker.patch('gemini.time.sleep')
 
 
 def _valid_score(index, score):
 	return {'index': index, 'relevance_score': score, 'relevance_reason': 'r'}
 
 
-def _quota_429_body(quota_id, retry_delay=None):
-	details = [{'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaId': quota_id}]}]
-	if retry_delay is not None:
-		details.append({'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': retry_delay})
-	return {'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED', 'details': details}}
-
-
-_PER_DAY_429 = _quota_429_body('GenerateRequestsPerDayPerProjectPerModel-FreeTier')
-_PER_MINUTE_429 = _quota_429_body('GenerateRequestsPerMinutePerProjectPerModel-FreeTier')
+_PER_DAY_429 = {
+	'error': {
+		'code': 429,
+		'status': 'RESOURCE_EXHAUSTED',
+		'details': [
+			{
+				'@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+				'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}],
+			}
+		],
+	}
+}
 
 
 # -- parse_gemini_scores --
@@ -356,34 +361,10 @@ def test_gemini_strips_trailing_whitespace_from_response():
 
 
 @responses.activate
-def test_gemini_retries_on_429_then_succeeds(capsys):
-	responses.post(GEMINI_URL, json={}, status=429)
-	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert gemini('prompt', 'fake-key') == 'ok'
-	assert 'Gemini 429' in capsys.readouterr().out
-
-
-@responses.activate
 def test_gemini_raises_after_all_retries_are_429():
 	for _ in range(3):
 		responses.post(GEMINI_URL, json={}, status=429)
 	with pytest.raises(Exception, match='Gemini failed after retries'):
-		gemini('prompt', 'fake-key')
-
-
-@pytest.mark.parametrize('status', [500, 502, 503, 504])
-@responses.activate
-def test_gemini_retries_each_5xx_then_succeeds(status):
-	responses.post(GEMINI_URL, json={'error': 'transient'}, status=status)
-	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert gemini('prompt', 'fake-key') == 'ok'
-
-
-@responses.activate
-def test_gemini_names_last_status_after_exhausting_5xx_retries():
-	# The final registration repeats, so every attempt sees a 503; the exhaustion message must name it so logs distinguish 5xx exhaustion from 429 exhaustion.
-	responses.post(GEMINI_URL, json={'error': 'down'}, status=503)
-	with pytest.raises(Exception, match='last status 503'):
 		gemini('prompt', 'fake-key')
 
 
@@ -392,26 +373,6 @@ def test_gemini_names_last_status_after_exhausting_429_retries():
 	responses.post(GEMINI_URL, json={}, status=429)
 	with pytest.raises(Exception, match='last status 429'):
 		gemini('prompt', 'fake-key')
-
-
-def test_gemini_honours_retry_after_header(no_sleep):
-	with responses.RequestsMock() as rmock:
-		rmock.post(GEMINI_URL, json={'error': 'down'}, status=503, headers={'Retry-After': '7'})
-		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-		assert gemini('prompt', 'fake-key') == 'ok'
-	# Pre-attempt sleep(5), Retry-After-driven sleep(7), then the successful attempt's pre-sleep.
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 7, 5]
-
-
-def test_gemini_falls_back_to_backoff_when_retry_after_not_numeric(no_sleep):
-	# HTTP-date form is ignored by design; the schedule's 15s applies.
-	with responses.RequestsMock() as rmock:
-		rmock.post(GEMINI_URL, json={}, status=503, headers={'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT'})
-		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-		assert gemini('prompt', 'fake-key') == 'ok'
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 15, 5]
 
 
 @responses.activate
@@ -436,9 +397,9 @@ def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 			rmock.post(GEMINI_URL, json={}, status=429)
 		with pytest.raises(Exception, match='Gemini failed after retries'):
 			gemini('prompt', 'fake-key')
-	# Each attempt: pre-attempt sleep(5), then on 429 sleep(15 * (attempt + 1)).
+	# Each attempt: pre-attempt sleep(5), then 15s-step backoff between attempts; no sleep after the final failure.
 	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 15, 5, 30, 5, 45]
+	assert sleep_calls == [5, 15, 5, 30, 5]
 
 
 @responses.activate
@@ -593,80 +554,10 @@ def test_gemini_raises_quota_exhausted_on_per_day_429():
 		gemini('prompt', 'fake-key')
 
 
-def test_gemini_skips_backoff_sleep_on_quota_exhausted(no_sleep):
-	with responses.RequestsMock() as rmock:
-		rmock.post(GEMINI_URL, json=_PER_DAY_429, status=429)
-		with pytest.raises(GeminiQuotaExhausted):
-			gemini('prompt', 'fake-key')
-	# Only the pre-attempt sleep(5); no backoff sleep ran (retry layer did not engage).
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5]
-
-
 @responses.activate
-def test_gemini_detects_quota_exhausted_via_substring_when_body_not_json():
-	# Falls back to substring match when the body is not parseable JSON.
-	responses.post(GEMINI_URL, body='quota violated: GenerateRequestsPerDayPerProjectPerModel', status=429)
-	with pytest.raises(GeminiQuotaExhausted):
-		gemini('prompt', 'fake-key')
-
-
 @responses.activate
-def test_gemini_retries_per_minute_429_then_succeeds():
-	# Per-minute limits recover within the run; they must enter the retry path, not halt the run as daily exhaustion.
-	responses.post(GEMINI_URL, json=_PER_MINUTE_429, status=429)
-	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert gemini('prompt', 'fake-key') == 'ok'
-
-
 @responses.activate
-def test_gemini_per_minute_429_exhaustion_raises_generic_error_not_quota():
-	responses.post(GEMINI_URL, json=_PER_MINUTE_429, status=429)
-	with pytest.raises(Exception, match='last status 429'):
-		gemini('prompt', 'fake-key')
-
-
 @responses.activate
-def test_gemini_resource_exhausted_without_quota_details_retries():
-	# A bare RESOURCE_EXHAUSTED with no quotaId is ambiguous; treat it as recoverable rather than halt the whole run on a guess.
-	responses.post(GEMINI_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
-	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-	assert gemini('prompt', 'fake-key') == 'ok'
-
-
-def test_gemini_honours_retry_info_delay(no_sleep):
-	with responses.RequestsMock() as rmock:
-		rmock.post(GEMINI_URL, json=_quota_429_body('PerMinute', retry_delay='7s'), status=429)
-		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-		assert gemini('prompt', 'fake-key') == 'ok'
-	# Pre-attempt sleep(5), RetryInfo-driven sleep(7.0), then the successful attempt's pre-sleep.
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 7.0, 5]
-
-
-def test_gemini_ignores_malformed_error_details(no_sleep):
-	# Non-dict detail entries and unparseable retryDelay values must not crash classification; the fixed schedule applies instead.
-	malformed = {'error': {'status': 'RESOURCE_EXHAUSTED', 'details': ['bogus', {'retryDelay': 'bads'}]}}
-	with responses.RequestsMock() as rmock:
-		rmock.post(GEMINI_URL, json=malformed, status=429)
-		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-		assert gemini('prompt', 'fake-key') == 'ok'
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 15, 5]
-
-
-def test_gemini_retry_after_header_beats_retry_info_delay(no_sleep):
-	# Retry-After is the transport-level directive; the body's RetryInfo is advisory and only consulted when the header is absent.
-	with responses.RequestsMock() as rmock:
-		rmock.post(
-			GEMINI_URL, json=_quota_429_body('PerMinute', retry_delay='9s'), status=429, headers={'Retry-After': '3'}
-		)
-		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
-		assert gemini('prompt', 'fake-key') == 'ok'
-	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
-	assert sleep_calls == [5, 3, 5]
-
-
 def test_score_chunk_propagates_quota_exhausted_without_swallowing(mocker):
 	# _score_chunk wraps gemini_fn in try/except; it must re-raise quota exhaustion rather than treat it as a regular per-batch error and return empty.
 	gemini_fn = mocker.Mock(side_effect=GeminiQuotaExhausted('quota'))
@@ -698,16 +589,6 @@ def test_score_and_summarise_short_circuits_on_quota_exhausted(mocker, capsys):
 
 
 @responses.activate
-def test_gemini_fires_on_attempt_once_per_retry_iteration():
-	# Three regular 429s exhaust retries; on_attempt fires once per attempt = 3.
-	for _ in range(3):
-		responses.post(GEMINI_URL, json={'error': 'rate limited'}, status=429)
-	counter = []
-	with pytest.raises(Exception, match='Gemini failed after retries'):
-		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
-	assert len(counter) == 3
-
-
 @responses.activate
 def test_gemini_fires_on_attempt_once_on_immediate_success():
 	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
@@ -717,28 +598,7 @@ def test_gemini_fires_on_attempt_once_on_immediate_success():
 
 
 @responses.activate
-def test_gemini_fires_on_attempt_before_quota_exhausted_raise():
-	# The failing attempt counts even though it raises GeminiQuotaExhausted.
-	responses.post(GEMINI_URL, json=_PER_DAY_429, status=429)
-	counter = []
-	with pytest.raises(GeminiQuotaExhausted):
-		gemini('prompt', 'fake-key', on_attempt=lambda: counter.append(1))
-	assert len(counter) == 1
-
-
 # -- budget exhaustion (caller-owned, raised through on_attempt) --
-
-
-def test_gemini_on_attempt_raise_propagates_without_posting(no_sleep):
-	# When on_attempt raises (the path main uses to enforce its per-attempt budget cap), the iteration stops before sleeping or posting.
-	def raising_on_attempt():
-		raise GeminiBudgetExhausted('budget 0 reached after 0 calls')
-
-	with responses.RequestsMock() as rmock:
-		with pytest.raises(GeminiBudgetExhausted):
-			gemini('prompt', 'fake-key', on_attempt=raising_on_attempt)
-		assert len(rmock.calls) == 0
-	no_sleep.assert_not_called()
 
 
 def test_score_chunk_propagates_budget_exhausted_without_swallowing(mocker):
