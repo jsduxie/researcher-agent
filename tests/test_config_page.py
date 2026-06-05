@@ -80,6 +80,7 @@ def test_form_prepopulates_context_numbers_and_model(stub_db):
 	assert at.number_input(key='cfg_threshold').value == _SEED['relevance_threshold']
 	assert at.number_input(key='cfg_days_back').value == _SEED['days_back']
 	assert at.number_input(key='cfg_max_per_query').value == _SEED['max_per_query']
+	assert at.number_input(key='cfg_prefilter_top_n').value == _SEED['prefilter_top_n']
 	assert at.text_input(key='cfg_model').value == _SEED['gemini_model']
 
 
@@ -93,6 +94,7 @@ def test_form_does_not_expose_infrastructure_keys(stub_db):
 		'cfg_threshold',
 		'cfg_days_back',
 		'cfg_max_per_query',
+		'cfg_prefilter_top_n',
 		'cfg_model',
 	}
 
@@ -124,6 +126,13 @@ def test_submit_writes_only_changed_keys(stub_db):
 	assert stub_db['update_config'].call_args.args[1] == {'relevance_threshold': 9}
 	assert stub_db['update_config'].call_args.kwargs['by'] == 'dashboard'
 	assert any(_COPY['config']['saved'] in m.value for m in at.markdown)
+
+
+def test_submit_writes_changed_prefilter_top_n(stub_db):
+	at = AppTest.from_file(_APP_PATH).run()
+	at.number_input(key='cfg_prefilter_top_n').set_value(50)
+	_submit(at)
+	assert stub_db['update_config'].call_args.args[1] == {'prefilter_top_n': 50}
 
 
 def test_queries_textarea_parses_one_query_per_line_dropping_blanks(stub_db):

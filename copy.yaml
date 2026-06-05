@@ -63,6 +63,7 @@ config:
   threshold_label: 'Relevance threshold (1-10)'
   days_back_label: 'Days back'
   max_per_query_label: 'Max per query'
+  prefilter_label: 'Pre-filter top N'
   model_label: 'Gemini model'
   submit: 'Save configuration'
   saved: 'Configuration saved.'
