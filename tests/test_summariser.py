@@ -865,14 +865,27 @@ def test_summarise_paper_cache_hit_short_circuits_even_with_pdf_url(mocker):
 	gemini_fn.assert_not_called()
 
 
-# -- quota exhaustion (RESOURCE_EXHAUSTED) --
+# -- quota exhaustion (daily PerDay quota) --
+
+_PER_DAY_429 = {
+	'error': {
+		'code': 429,
+		'status': 'RESOURCE_EXHAUSTED',
+		'details': [
+			{
+				'@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+				'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}],
+			}
+		],
+	}
+}
 
 
 @responses.activate
-def test_generate_with_file_raises_quota_exhausted_on_resource_exhausted_429():
+def test_generate_with_file_raises_quota_exhausted_on_per_day_429():
 	import scorer
 
-	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
 		_generate('p', 'files/abc', 'k')
 
@@ -881,7 +894,7 @@ def test_generate_with_file_raises_quota_exhausted_on_resource_exhausted_429():
 def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
 	import scorer
 
-	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
 		_generate('p', 'files/abc', 'k')
 	# No backoff sleeps; quota detection bypasses the retry loop entirely.
@@ -889,10 +902,10 @@ def test_generate_with_file_skips_backoff_on_quota_exhausted(_no_sleep):
 
 
 @responses.activate
-def test_upload_pdf_raises_quota_exhausted_on_resource_exhausted_429():
+def test_upload_pdf_raises_quota_exhausted_on_per_day_429():
 	import scorer
 
-	responses.post(GEMINI_FILES_UPLOAD_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_FILES_UPLOAD_URL, json=_PER_DAY_429, status=429)
 	with pytest.raises(scorer.GeminiQuotaExhausted):
 		_upload(b'pdf', 'paper.pdf', 'k')
 
@@ -913,7 +926,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 	responses.get(PDF_URL, body=b'pdf')
 	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
-	responses.post(GEMINI_GENERATE_URL, json={'error': {'status': 'RESOURCE_EXHAUSTED'}}, status=429)
+	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	# PDF path raises quota exhausted; abstract fallback must not run.

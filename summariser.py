@@ -125,7 +125,7 @@ def _post_with_retry(url, on_attempt=None, **kwargs):
 			on_attempt()
 		last = requests.post(url, **kwargs)
 		if last.status_code == 429 and _is_quota_exhausted(last):
-			raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
+			raise GeminiQuotaExhausted('Gemini daily quota exhausted (PerDay quota violated)')
 		if last.status_code not in GEMINI_RETRY_STATUS_CODES:
 			return last
 		if attempt == len(GEMINI_BACKOFF_DELAYS):
