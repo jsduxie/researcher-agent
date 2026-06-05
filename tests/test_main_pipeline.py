@@ -38,6 +38,7 @@ def mock_db(mocker):
 		'record_run_papers': mocker.patch('main.db.record_run_papers'),
 		'needs_scoring': mocker.patch('main.db.needs_scoring', side_effect=lambda conn, ids: set(ids)),
 		'list_unscored': mocker.patch('main.db.list_unscored', return_value=[]),
+		'set_paper_embedding': mocker.patch('main.db.set_paper_embedding'),
 		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
 	}
@@ -47,6 +48,8 @@ def mock_db(mocker):
 def mock_io(mocker):
 	return {
 		'fetch': mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}]),
+		# Identical vectors for everything: ties rank stably, top_n=30 passes the whole queue, and no test touches the real model.
+		'embed': mocker.patch('main.embedder.embed_texts', side_effect=lambda texts: [[1.0, 0.0] for _ in texts]),
 		'score': mocker.patch(
 			'main.scorer.score_and_summarise', return_value=([{'paperId': 'p1', 'ai_score': 8}], {'p1'}, {'p1'})
 		),
@@ -191,8 +194,8 @@ def test_live_run_sweeps_unscored_backlog_into_scoring(mock_db, mock_io, mocker)
 	mock_db['list_unscored'].return_value = [backlog_paper]
 	main.main([])
 	scored = mock_io['score'].call_args.args[0]
-	assert backlog_paper in scored
-	assert {'paperId': 'p1'} in scored
+	# Identical fixture vectors rank stably, so queue order survives; the pre-filter adds its rank key to each.
+	assert [p['paperId'] for p in scored] == ['p1', 'old1']
 
 
 def test_live_run_passes_sweep_filters_to_list_unscored(mock_db, mock_io):
@@ -216,6 +219,52 @@ def test_live_run_marks_attempts_from_scorer_not_scoring_input(mock_db, mock_io,
 	mock_io['score'].return_value = ([], set(), {'p1'})
 	main.main([])
 	assert mock_db['mark_scoring_results'].call_args.kwargs['attempted'] == ['p1']
+
+
+# -- embedding pre-filter --
+
+
+def test_live_run_prefilter_keeps_top_n_most_similar_in_ranked_order(mock_db, mock_io, mocker):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	mock_db['config_load'].return_value = replace(_TEST_CFG, prefilter_top_n=2)
+	# First call embeds the research context, second the three papers; p2 matches best, then p3.
+	mock_io['embed'].side_effect = [[[1.0, 0.0]], [[0.0, 1.0], [1.0, 0.0], [0.7, 0.7]]]
+	main.main([])
+	scored = mock_io['score'].call_args.args[0]
+	assert [p['paperId'] for p in scored] == ['p2', 'p3']
+	assert [p['_prefilter_rank'] for p in scored] == [1, 2]
+
+
+def test_live_run_prefilter_stores_embeddings_for_the_whole_queue(mock_db, mock_io, mocker):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}])
+	main.main([])
+	stored = [c.args[1] for c in mock_db['set_paper_embedding'].call_args_list]
+	assert stored == ['p1', 'p2']
+	assert all(c.args[2] == [1.0, 0.0] for c in mock_db['set_paper_embedding'].call_args_list)
+
+
+def test_live_run_prefilter_logs_considered_vs_passed(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	mock_db['config_load'].return_value = replace(_TEST_CFG, prefilter_top_n=2)
+	main.main([])
+	assert 'Pre-filter: 3 candidates considered, 2 passed to the scorer (top_n=2)' in capsys.readouterr().out
+
+
+def test_live_run_logs_average_prefilter_rank_of_kept_papers(mock_db, mock_io, capsys):
+	# The scorer returns the same dict objects it was given, so the rank attached by the pre-filter survives.
+	mock_io['score'].side_effect = lambda papers, fn, cfg: (papers, {'p1'}, {'p1'})
+	main.main([])
+	assert 'Average pre-filter rank of threshold-passing papers: 1.0' in capsys.readouterr().out
+
+
+def test_no_prefilter_flag_scores_full_queue_without_embedding(mock_db, mock_io, mocker, capsys):
+	mocker.patch('main.fetch_papers', return_value=[{'paperId': 'p1'}, {'paperId': 'p2'}, {'paperId': 'p3'}])
+	mock_db['config_load'].return_value = replace(_TEST_CFG, prefilter_top_n=2)
+	main.main(['--no-prefilter'])
+	mock_io['embed'].assert_not_called()
+	mock_db['set_paper_embedding'].assert_not_called()
+	assert len(mock_io['score'].call_args.args[0]) == 3
+	assert 'Pre-filter disabled' in capsys.readouterr().out
 
 
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
@@ -579,9 +628,9 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Phase D sessions are now owned by summariser.summarise_paper (mocked here); main opens config-load (init+cfg) + A (upserts+needs_scoring) + C (mark) + E (finish) = 4.
+	# Phase D sessions are owned by summariser.summarise_paper (mocked here); main opens config-load + A (upserts) + B (embedding store) + C (mark) + E (finish) = 5.
 	main.main([])
-	assert mock_db['session'].call_count == 4
+	assert mock_db['session'].call_count == 5
 
 
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
@@ -625,7 +674,7 @@ def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
 
 
 def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
-	# Config-load and Phase A succeed; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
+	# Config-load, Phase A and the embedding store succeed; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
 	from contextlib import contextmanager
 
 	import psycopg
@@ -635,7 +684,7 @@ def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
 	@contextmanager
 	def maybe_failing(url):
 		call_count[0] += 1
-		if call_count[0] <= 2:
+		if call_count[0] <= 3:
 			yield mock_db['conn']
 		else:
 			raise psycopg.OperationalError('reaped')

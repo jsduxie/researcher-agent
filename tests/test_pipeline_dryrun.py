@@ -34,3 +34,12 @@ def test_dry_run_short_circuits_time_sleep(mocker):
 
 	mock_fetcher_sleep.assert_not_called()
 	mock_gemini_sleep.assert_not_called()
+
+
+def test_dry_run_skips_the_embedding_prefilter(mocker, capsys):
+	# Dry-run stays offline: no model load, no embedding.
+	mocker.patch.object(main, 'DRY_RUN', False)
+	embed = mocker.patch('main.embedder.embed_texts')
+	main.main(['--dry-run'])
+	embed.assert_not_called()
+	assert 'Pre-filter disabled' in capsys.readouterr().out
