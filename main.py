@@ -7,6 +7,7 @@ from pathlib import Path
 import config
 import db
 import emailer
+import embedder
 import scorer
 import summariser
 from fetcher import FetchError, dedup_papers, fetch_papers
@@ -155,14 +156,41 @@ def _finalise_run(database_url, run_id, papers_kept, queries_attempted, queries_
 	print(f'Finalised run: run_id={run_id}, papers_kept={papers_kept}')
 
 
-def main(argv=None):
+def _prefilter_scoring_queue(papers, database_url):
+	# Local embedding rank against research_context so only the most plausible top N spend Gemini quota; vectors persist for later similarity retrieval.
+	if not papers:
+		return papers
+	[context_vector] = embedder.embed_texts([_CFG.research_context])
+	texts = [f'{p.get("title") or ""}\n\n{p.get("abstract") or ""}' for p in papers]
+	vectors = embedder.embed_texts(texts)
+	if database_url is not None:
+		with db.session(database_url) as conn:
+			for paper, vector in zip(papers, vectors, strict=True):
+				db.set_paper_embedding(conn, paper['paperId'], vector)
+	order = embedder.rank_by_similarity(context_vector, vectors)
+	kept = []
+	for position, idx in enumerate(order[: _CFG.prefilter_top_n], start=1):
+		# Rank rides on the paper so the post-scoring log can report how well the pre-filter predicted the LLM's keeps.
+		papers[idx]['_prefilter_rank'] = position
+		kept.append(papers[idx])
+	print(
+		f'Pre-filter: {len(papers)} candidates considered, {len(kept)} passed to the scorer (top_n={_CFG.prefilter_top_n})'
+	)
+	return kept
+
+
+def _bootstrap(argv):
+	# Parses args, validates env, and loads cfg before any work runs so a corrupt config table fails fast.
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
+	parser.add_argument(
+		'--no-prefilter', action='store_true', help='ablation: score the full queue without the embedding pre-filter'
+	)
 	global DRY_RUN, GEMINI_CALL_COUNT, GEMINI_CALL_BUDGET, _CFG
-	DRY_RUN = parser.parse_args(argv).dry_run
+	args = parser.parse_args(argv)
+	DRY_RUN = args.dry_run
 	GEMINI_CALL_COUNT = 0
 
-	run_id = None
 	api_key = None
 	database_url = None
 	if not DRY_RUN:
@@ -172,22 +200,30 @@ def main(argv=None):
 		api_key = os.environ['SEMANTIC_SCHOLAR_API_KEY']
 		database_url = os.environ['DATABASE_URL']
 		print(f'DB target: {_db_host_for_log(database_url)}')
-		# Load cfg before any work runs so a corrupt config table fails fast and every downstream call sees the same values.
 		with db.session(database_url) as conn:
 			db.init_schema(conn)
 			_CFG = config.load(conn)
 	else:
 		_CFG = config.Config(**config.load_seed())
 	GEMINI_CALL_BUDGET = _CFG.gemini_call_budget
+	return args, api_key, database_url
 
-	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
 
+def _dedupe_fetched(all_papers):
 	unique = dedup_papers(all_papers)
 	# Papers without paperId can't be persisted (paper_id is the PK) or deduplicated across runs; drop up front rather than crashing in upsert.
 	missing_id = [p for p in unique if not p.get('paperId')]
 	if missing_id:
 		print(f'Dropped {len(missing_id)} paper(s) without paperId (cannot persist)')
-	unique = [p for p in unique if p.get('paperId')]
+	return [p for p in unique if p.get('paperId')]
+
+
+def main(argv=None):
+	args, api_key, database_url = _bootstrap(argv)
+	run_id = None
+
+	all_papers, queries_attempted, queries_errored = _collect_papers(api_key)
+	unique = _dedupe_fetched(all_papers)
 
 	if database_url is not None:
 		run_id, new_papers = _persist_fetched_papers(database_url, unique)
@@ -196,10 +232,19 @@ def main(argv=None):
 
 	print(f'{len(unique)} unique papers found, {len(new_papers)} need scoring. Scoring\n')
 
+	# Dry-run stays offline (no model load); --no-prefilter is the live ablation path for A/B comparison.
+	if DRY_RUN or args.no_prefilter:
+		print('Pre-filter disabled; scoring the full queue')
+	else:
+		new_papers = _prefilter_scoring_queue(new_papers, database_url)
+
 	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
 	enriched, responded, attempted = scorer.score_and_summarise(new_papers, _gemini_score, _CFG)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={_CFG.relevance_threshold}/10).')
+	ranks = [p['_prefilter_rank'] for p in enriched if '_prefilter_rank' in p]
+	if ranks:
+		print(f'Average pre-filter rank of threshold-passing papers: {sum(ranks) / len(ranks):.1f}')
 
 	if database_url is not None and new_papers:
 		_record_scoring_attempts(database_url, attempted, responded)
