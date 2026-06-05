@@ -69,8 +69,10 @@ def load_seed():
 def load(conn):
 	# Bootstraps app_config from the seed on first call, and backfills keys added after the table was seeded so Config never sees a missing field.
 	data = db.load_config(conn)
-	missing = {k: v for k, v in load_seed().items() if k not in data}
-	if missing:
+	missing_keys = [k for k in DIGEST_KEYS if k not in data]
+	if missing_keys:
+		seed = load_seed()
+		missing = {k: seed[k] for k in missing_keys}
 		db.update_config(conn, missing, by='seed')
 		data.update(missing)
 	return Config(**data)
