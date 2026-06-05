@@ -4,7 +4,7 @@ import main
 def test_dry_run_uses_fixtures_and_makes_no_network_calls(mocker, capsys):
 	mocker.patch.object(main, 'DRY_RUN', False)
 	mock_get = mocker.patch('fetcher.requests.get')
-	mock_post = mocker.patch('scorer.requests.post')
+	mock_post = mocker.patch('gemini.requests.post')
 	mock_summariser_get = mocker.patch('summariser.requests.get')
 	mock_summariser_post = mocker.patch('summariser.requests.post')
 	mock_smtp = mocker.patch('emailer.smtplib.SMTP_SSL')
@@ -28,9 +28,9 @@ def test_dry_run_uses_fixtures_and_makes_no_network_calls(mocker, capsys):
 def test_dry_run_short_circuits_time_sleep(mocker):
 	mocker.patch.object(main, 'DRY_RUN', False)
 	mock_fetcher_sleep = mocker.patch('fetcher.time.sleep')
-	mock_scorer_sleep = mocker.patch('scorer.time.sleep')
+	mock_gemini_sleep = mocker.patch('gemini.time.sleep')
 
 	main.main(['--dry-run'])
 
 	mock_fetcher_sleep.assert_not_called()
-	mock_scorer_sleep.assert_not_called()
+	mock_gemini_sleep.assert_not_called()
