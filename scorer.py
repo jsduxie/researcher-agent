@@ -159,6 +159,21 @@ def score_and_summarise(papers, gemini_fn, cfg):
 	if not papers:
 		return [], set()
 
+	enriched, responded, halted = _score_batches(papers, gemini_fn, cfg)
+
+	# Re-batch unanswered papers once at the end; id-less papers are skipped because responded can never contain them.
+	missed = [] if halted else [p for p in papers if p.get('paperId') and p['paperId'] not in responded]
+	if missed:
+		print(f'Rescoring {len(missed)} unresponded paper(s) in a second pass...')
+		more_enriched, more_responded, _ = _score_batches(missed, gemini_fn, cfg)
+		enriched.extend(more_enriched)
+		responded.update(more_responded)
+
+	return enriched, responded
+
+
+def _score_batches(papers, gemini_fn, cfg):
+	# halted means quota or budget stopped the run; callers must not send further Gemini work.
 	enriched = []
 	responded = set()
 	batch_size = cfg.batch_size
@@ -169,14 +184,14 @@ def score_and_summarise(papers, gemini_fn, cfg):
 			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn, cfg)
 		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting remaining batches: {e}')
-			break
+			return enriched, responded, True
 		except GeminiBudgetExhausted as e:
 			print(f'Budget exhausted, halting remaining batches: {e}')
-			break
+			return enriched, responded, True
 		enriched.extend(chunk_enriched)
 		responded.update(chunk_responded)
 
-	return enriched, responded
+	return enriched, responded, False
 
 
 def _score_chunk(papers, gemini_fn, cfg):
