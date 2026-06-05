@@ -658,7 +658,7 @@ def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
 
 def test_summarise_kept_papers_halts_on_quota_exhausted_and_preserves_earlier_fields(mock_db, mock_io, mocker):
 	# 3 kept papers; summarise_paper raises GeminiQuotaExhausted on the 2nd.
-	import scorer as scorer_module
+	import gemini as gemini_module
 
 	# Scores descending so the sort in main() preserves p1/p2/p3 order.
 	p1 = {'paperId': 'p1', 'ai_score': 9}
@@ -667,7 +667,7 @@ def test_summarise_kept_papers_halts_on_quota_exhausted_and_preserves_earlier_fi
 	mock_io['score'].return_value = ([p1, p2, p3], {'p1', 'p2', 'p3'}, {'p1', 'p2', 'p3'})
 
 	summary = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
-	mock_io['summarise'].side_effect = [summary, scorer_module.GeminiQuotaExhausted('quota'), summary]
+	mock_io['summarise'].side_effect = [summary, gemini_module.GeminiQuotaExhausted('quota'), summary]
 
 	main.main([])
 
