@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS papers (
 	paper_id TEXT PRIMARY KEY,
 	title TEXT,
@@ -16,6 +18,9 @@ CREATE TABLE IF NOT EXISTS papers (
 -- Idempotent migration for databases created before these columns existed.
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS scored_at TIMESTAMPTZ;
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS score_attempts INTEGER NOT NULL DEFAULT 0;
+
+-- all-MiniLM-L6-v2 vectors; nullable because embedding happens at scoring time, not upsert.
+ALTER TABLE papers ADD COLUMN IF NOT EXISTS embedding vector(384);
 
 CREATE TABLE IF NOT EXISTS paper_authors (
 	paper_id TEXT NOT NULL REFERENCES papers(paper_id) ON DELETE CASCADE,

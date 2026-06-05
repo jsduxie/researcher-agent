@@ -293,6 +293,25 @@ def test_list_unscored_respects_limit(conn):
 	assert len(db.list_unscored(conn, exclude_ids=[], max_attempts=3, limit=2)) == 2
 
 
+# -- embeddings --
+
+
+def test_paper_embedding_round_trips_through_pgvector(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	vector = [round(i / 384, 6) for i in range(384)]
+	db.set_paper_embedding(conn, 'p1', vector)
+	stored = db.get_paper_embedding(conn, 'p1')
+	assert stored is not None
+	assert len(stored) == 384
+	# pgvector stores float4, so compare at its precision rather than exact equality.
+	assert all(abs(a - b) < 1e-5 for a, b in zip(stored, vector, strict=True))
+
+
+def test_get_paper_embedding_none_before_any_embedding_written(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	assert db.get_paper_embedding(conn, 'p1') is None
+
+
 # -- mark_scoring_results --
 
 

@@ -227,6 +227,25 @@ def mark_scoring_results(conn, attempted, responded):
 			cur.execute('UPDATE papers SET scored_at = NOW() WHERE paper_id = ANY(%s)', (responded_list,))
 
 
+# -- embeddings (pgvector; serialised as '[f1,f2,...]' text so no pgvector client package is needed) --
+
+
+@database_reconnect
+def set_paper_embedding(conn, paper_id, embedding):
+	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	with conn.cursor() as cur:
+		cur.execute('UPDATE papers SET embedding = %s::vector WHERE paper_id = %s', (serialised, paper_id))
+
+
+def get_paper_embedding(conn, paper_id):
+	with conn.cursor() as cur:
+		cur.execute('SELECT embedding::text FROM papers WHERE paper_id = %s', (paper_id,))
+		row = cur.fetchone()
+	if row is None or row[0] is None:
+		return None
+	return [float(v) for v in row[0].strip('[]').split(',')]
+
+
 # -- review writes (append-only event log; readers select the latest row) --
 
 
