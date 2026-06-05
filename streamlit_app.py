@@ -1,3 +1,4 @@
+import html
 import os
 from pathlib import Path
 
@@ -70,9 +71,12 @@ def _filters():
 
 @st.dialog(' ', width='large')
 def _show_paper(paper):
-	title = paper.get('title') or 'Untitled'
+	# Titles, authors, abstracts and summaries originate outside the app (Semantic Scholar / Gemini); escape everything interpolated under unsafe_allow_html (PR #32 review).
+	title = html.escape(paper.get('title') or 'Untitled')
 	st.markdown(f'<div class="modal-title">{title}</div>', unsafe_allow_html=True)
-	st.markdown(f'<div class="modal-authors">{_format_authors(paper.get("authors"))}</div>', unsafe_allow_html=True)
+	st.markdown(
+		f'<div class="modal-authors">{html.escape(_format_authors(paper.get("authors")))}</div>', unsafe_allow_html=True
+	)
 	meta = []
 	if paper.get('year'):
 		meta.append(str(paper['year']))
@@ -81,7 +85,7 @@ def _show_paper(paper):
 	if paper.get('latest_rating'):
 		meta.append(f'{paper["latest_rating"]} {COPY["icons"]["rating_star"]}')
 	if paper.get('doi'):
-		meta.append(f'DOI {paper["doi"]}')
+		meta.append(f'DOI {html.escape(paper["doi"])}')
 	if meta:
 		sep = f' {COPY["icons"]["meta_separator"]} '
 		st.markdown(f'<div class="modal-meta">{sep.join(meta)}</div>', unsafe_allow_html=True)
@@ -90,11 +94,11 @@ def _show_paper(paper):
 	action_links = []
 	if paper.get('url'):
 		action_links.append(
-			f'<a class="modal-action-link" href="{paper["url"]}" target="_blank">{COPY["buttons"]["open_paper"]}</a>'
+			f'<a class="modal-action-link" href="{html.escape(paper["url"], quote=True)}" target="_blank" rel="noopener noreferrer">{COPY["buttons"]["open_paper"]}</a>'
 		)
 	if paper.get('pdf_url'):
 		action_links.append(
-			f'<a class="modal-action-link" href="{paper["pdf_url"]}" target="_blank">{COPY["buttons"]["open_pdf"]}</a>'
+			f'<a class="modal-action-link" href="{html.escape(paper["pdf_url"], quote=True)}" target="_blank" rel="noopener noreferrer">{COPY["buttons"]["open_pdf"]}</a>'
 		)
 	if action_links:
 		st.markdown(f'<div class="modal-actions">{"".join(action_links)}</div>', unsafe_allow_html=True)
@@ -105,7 +109,7 @@ def _show_paper(paper):
 		st.markdown(
 			f'<hr class="section-divider"/>'
 			f'<div class="section-label">ABSTRACT</div>'
-			f'<div class="section-body">{abstract}</div>',
+			f'<div class="section-body">{html.escape(abstract)}</div>',
 			unsafe_allow_html=True,
 		)
 
@@ -125,7 +129,7 @@ def _show_paper(paper):
 			st.markdown(
 				f'<hr class="section-divider"/>'
 				f'<div class="section-label">{label_text}</div>'
-				f'<div class="section-body">{value}</div>',
+				f'<div class="section-body">{html.escape(value)}</div>',
 				unsafe_allow_html=True,
 			)
 			prev = latest_field.get(field) or {}
@@ -194,7 +198,9 @@ def _render_paper_row(paper, index):
 	row[0].markdown(f'<div class="row-index">{index:02d}</div>', unsafe_allow_html=True)
 	if row[1].button(paper.get('title') or 'Untitled', key=f'title_{paper_id}', use_container_width=True):
 		_show_paper(paper)
-	row[2].markdown(f'<div class="row-meta">{_format_authors(paper.get("authors"))}</div>', unsafe_allow_html=True)
+	row[2].markdown(
+		f'<div class="row-meta">{html.escape(_format_authors(paper.get("authors")))}</div>', unsafe_allow_html=True
+	)
 	row[3].markdown(f'<div class="row-meta">{date_str}</div>', unsafe_allow_html=True)
 	row[4].markdown(
 		f'<div class="row-rating">{_format_rating(paper.get("latest_rating"))}</div>', unsafe_allow_html=True

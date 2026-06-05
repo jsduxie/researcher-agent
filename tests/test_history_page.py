@@ -213,3 +213,58 @@ def test_page_uses_dark_palette_in_css(stub_db):
 	# History page inherits the same theme tokens as the entrypoint; verifies the palette doesn't drift if styles.css changes shape.
 	assert '#131110' in css
 	assert '#d99565' in css
+
+
+# -- HTML escaping of upstream strings (PR #32 review) --
+
+
+def test_expander_escapes_paper_title_html(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(title='<script>alert(1)</script>')]
+	at = AppTest.from_file(_APP_PATH).run()
+	title_blocks = [m.value for m in at.markdown if 'class="history-paper-title"' in m.value]
+	assert any('&lt;script&gt;alert(1)&lt;/script&gt;' in m for m in title_blocks)
+	assert not any('<script>' in m for m in title_blocks)
+
+
+def test_expander_escapes_author_names(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(authors=['<b>Eve</b>'])]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert any('&lt;b&gt;Eve&lt;/b&gt;' in m for m in meta_blocks)
+	assert not any('<b>Eve</b>' in m for m in meta_blocks)
+
+
+def test_expander_renders_no_authors_placeholder_when_authors_missing(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(authors=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert any(_COPY['authors']['none'] in m for m in meta_blocks)
+
+
+def test_expander_truncates_author_list_with_etal_beyond_three(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(authors=['A', 'B', 'C', 'D'])]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert any(f'A, B, C{_COPY["authors"]["etal_suffix"]}' in m for m in meta_blocks)
+	assert not any('D' in m for m in meta_blocks)
+
+
+def test_run_header_omits_queries_part_when_counts_missing(stub_db):
+	# Pre-migration runs have NULL queries_attempted; the header drops the queries segment rather than printing zeros.
+	stub_db['list_runs'].return_value = [_make_run(queries_attempted=None, queries_errored=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	(exp,) = at.expander
+	assert _COPY['history']['queries_label'] not in exp.label
+
+
+def test_expander_omits_year_when_paper_has_none(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(year=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert meta_blocks
+	assert not any('2017' in m for m in meta_blocks)

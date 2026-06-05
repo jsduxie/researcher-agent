@@ -199,3 +199,14 @@ def test_audit_trail_renders_unknown_actor_glyph_when_changed_by_is_null(stub_db
 	at = AppTest.from_file(_APP_PATH).run()
 	rows = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
 	assert any(_COPY['icons']['date_unknown'] in r for r in rows)
+
+
+def test_audit_trail_escapes_key_and_changed_by(stub_db):
+	# Keys and actors are DB-derived strings rendered under unsafe_allow_html; hostile content must arrive escaped (PR #32 review).
+	stub_db['list_config_history'].return_value = [
+		_make_history_entry(key='<img src=x onerror=y>', changed_by='<script>z</script>')
+	]
+	at = AppTest.from_file(_APP_PATH).run()
+	rows = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert any('&lt;img src=x onerror=y&gt;' in r and '&lt;script&gt;z&lt;/script&gt;' in r for r in rows)
+	assert not any('<script>' in r for r in rows)

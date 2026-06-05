@@ -138,7 +138,7 @@ def _render_history(conn):
 			entry['changed_at'].strftime('%Y-%m-%d %H:%M') if entry.get('changed_at') else COPY['icons']['date_unknown']
 		)
 		by = entry.get('changed_by') or COPY['icons']['date_unknown']
-		line = sep.join([changed_at, entry['key'], by, _value_preview(entry['value'])])
+		line = sep.join([changed_at, html.escape(entry['key']), html.escape(by), _value_preview(entry['value'])])
 		st.markdown(f'<div class="history-paper-meta">{line}</div>', unsafe_allow_html=True)
 
 
