@@ -221,7 +221,7 @@ def _inject_styles():
 	st.markdown(f'<style>{_STYLES_PATH.read_text()}</style>', unsafe_allow_html=True)
 
 
-_NAV_ITEMS = (('papers', 'streamlit_app.py'), ('history', 'pages/history.py'))
+_NAV_ITEMS = (('papers', 'streamlit_app.py'), ('history', 'pages/history.py'), ('config', 'pages/config.py'))
 
 
 def _render_sidebar(current):

@@ -4,6 +4,7 @@ empty_state: No papers match.
 nav:
   papers: 'Papers'
   history: 'History'
+  config: 'Configuration'
 search_placeholder: search title or abstract
 labels:
   search: Search
@@ -54,3 +55,21 @@ history:
   in_progress: 'in progress'
   tag_new: 'new'
   tag_repeat: 'repeat'
+
+config:
+  page_title: 'Configuration'
+  queries_label: 'Search queries (one per line)'
+  context_label: 'Research context'
+  threshold_label: 'Relevance threshold (1-10)'
+  days_back_label: 'Days back'
+  max_per_query_label: 'Max per query'
+  model_label: 'Gemini model'
+  submit: 'Save configuration'
+  saved: 'Configuration saved.'
+  no_changes: 'No changes to save.'
+  error_no_queries: 'At least one search query is required.'
+  error_no_context: 'Research context cannot be empty.'
+  error_no_model: 'Gemini model cannot be empty.'
+  truncation_suffix: '…'
+  history_label: 'RECENT CHANGES'
+  empty_history: 'No configuration changes recorded yet.'

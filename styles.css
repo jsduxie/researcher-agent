@@ -571,3 +571,34 @@ button[key='page_next'] {
 [data-testid='stForm'] [data-testid='InputInstructions'] {
 	display: none !important;
 }
+
+/* Config page: inline status / error lines rendered under the form after a submit. */
+.config-status {
+	font-family: var(--font-mono);
+	font-size: 0.85rem;
+	color: var(--accent);
+	margin: 0.75rem 1.25rem;
+}
+
+.config-error {
+	font-family: var(--font-mono);
+	font-size: 0.85rem;
+	color: #c96b5d;
+	margin: 0.75rem 1.25rem;
+}
+
+/* Config form numeric fields: mirror the stTextInput treatment so the trio of number inputs sits in the same palette. */
+[data-testid='stNumberInput'] input {
+	background: var(--surface) !important;
+	color: var(--text) !important;
+	border: 1px solid var(--rule) !important;
+	border-radius: 0 !important;
+	font-family: var(--font-mono) !important;
+}
+
+[data-testid='stNumberInput'] button {
+	background: var(--surface) !important;
+	color: var(--muted) !important;
+	border: 1px solid var(--rule) !important;
+	border-radius: 0 !important;
+}
