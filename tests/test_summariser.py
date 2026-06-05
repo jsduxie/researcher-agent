@@ -510,7 +510,7 @@ def test_upload_pdf_to_gemini_returns_file_uri_on_happy_path():
 
 @responses.activate
 def test_upload_pdf_to_gemini_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs.
 	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'u'}})
 	_upload(b'pdf', 'my-key-value', 'my-key-value-secret')
@@ -611,7 +611,7 @@ def test_generate_with_file_sends_file_data_and_prompt_parts():
 
 @responses.activate
 def test_generate_with_file_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs.
 	responses.post(GEMINI_GENERATE_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	_generate('prompt', 'files/abc', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'

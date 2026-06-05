@@ -583,7 +583,7 @@ def test_form_submit_skips_summary_feedback_for_missing_fields(stub_db):
 	stub_db['insert_rating'].assert_called_once()
 
 
-# -- HTML escaping of upstream strings (PR #32 review) --
+# -- HTML escaping of upstream strings --
 
 _HOSTILE = '<script>alert(1)</script>'
 _HOSTILE_ESCAPED = '&lt;script&gt;alert(1)&lt;/script&gt;'

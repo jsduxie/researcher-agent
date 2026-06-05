@@ -87,7 +87,7 @@ def _render_run_papers(papers):
 		st.markdown(f'<div class="empty">{COPY["history"]["empty_run_papers"]}</div>', unsafe_allow_html=True)
 		return
 	for paper in papers:
-		# Titles and authors come from upstream sources via the DB; escape before interpolating under unsafe_allow_html (PR #32 review).
+		# Titles and authors come from upstream sources via the DB; escape before interpolating under unsafe_allow_html.
 		title = html.escape(paper.get('title') or 'Untitled')
 		# Tag every paper as new on first encounter or repeat on subsequent runs; lets operators see at a glance which runs introduced what.
 		tag_label = COPY['history']['tag_new'] if paper.get('was_new') else COPY['history']['tag_repeat']

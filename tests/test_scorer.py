@@ -253,7 +253,7 @@ def test_gemini_retries_on_429_then_succeeds(capsys):
 	responses.post(GEMINI_URL, json={}, status=429)
 	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	assert gemini('prompt', 'fake-key') == 'ok'
-	assert 'rate limited' in capsys.readouterr().out
+	assert 'Gemini 429' in capsys.readouterr().out
 
 
 @responses.activate
@@ -264,11 +264,56 @@ def test_gemini_raises_after_all_retries_are_429():
 		gemini('prompt', 'fake-key')
 
 
+@pytest.mark.parametrize('status', [500, 502, 503, 504])
 @responses.activate
-def test_gemini_raises_on_500():
-	responses.post(GEMINI_URL, json={'error': 'oops'}, status=500)
+def test_gemini_retries_each_5xx_then_succeeds(status):
+	responses.post(GEMINI_URL, json={'error': 'transient'}, status=status)
+	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+	assert gemini('prompt', 'fake-key') == 'ok'
+
+
+@responses.activate
+def test_gemini_names_last_status_after_exhausting_5xx_retries():
+	# The final registration repeats, so every attempt sees a 503; the exhaustion message must name it so logs distinguish 5xx exhaustion from 429 exhaustion.
+	responses.post(GEMINI_URL, json={'error': 'down'}, status=503)
+	with pytest.raises(Exception, match='last status 503'):
+		gemini('prompt', 'fake-key')
+
+
+@responses.activate
+def test_gemini_names_last_status_after_exhausting_429_retries():
+	responses.post(GEMINI_URL, json={}, status=429)
+	with pytest.raises(Exception, match='last status 429'):
+		gemini('prompt', 'fake-key')
+
+
+def test_gemini_honours_retry_after_header(no_sleep):
+	with responses.RequestsMock() as rmock:
+		rmock.post(GEMINI_URL, json={'error': 'down'}, status=503, headers={'Retry-After': '7'})
+		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+		assert gemini('prompt', 'fake-key') == 'ok'
+	# Pre-attempt sleep(5), Retry-After-driven sleep(7), then the successful attempt's pre-sleep.
+	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
+	assert sleep_calls == [5, 7, 5]
+
+
+def test_gemini_falls_back_to_backoff_when_retry_after_not_numeric(no_sleep):
+	# HTTP-date form is ignored by design; the schedule's 15s applies.
+	with responses.RequestsMock() as rmock:
+		rmock.post(GEMINI_URL, json={}, status=503, headers={'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT'})
+		rmock.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
+		assert gemini('prompt', 'fake-key') == 'ok'
+	sleep_calls = [call.args[0] for call in no_sleep.call_args_list]
+	assert sleep_calls == [5, 15, 5]
+
+
+@responses.activate
+def test_gemini_raises_http_error_on_non_retriable_status():
+	# 4xx other than 429 is a permanent request failure; it must surface immediately, not burn retries.
+	responses.post(GEMINI_URL, json={'error': 'forbidden'}, status=403)
 	with pytest.raises(requests.HTTPError):
 		gemini('prompt', 'fake-key')
+	assert len(responses.calls) == 1
 
 
 @responses.activate
@@ -291,7 +336,7 @@ def test_gemini_backoff_pattern_across_three_429s(no_sleep):
 
 @responses.activate
 def test_gemini_sends_api_key_in_header_not_url():
-	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs (PR #17 Copilot review).
+	# Auth via header keeps the key out of any URL that may surface in HTTPError messages and downstream logs.
 	responses.post(GEMINI_URL, json={'candidates': [{'content': {'parts': [{'text': 'ok'}]}}]})
 	gemini('prompt', 'my-secret-key')
 	assert responses.calls[0].request.headers['x-goog-api-key'] == 'my-secret-key'

@@ -9,6 +9,9 @@ from config import SCORER_PROMPT
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
 
+# Mirrors summariser.GEMINI_RETRY_STATUS_CODES; scorer cannot import it back without a cycle (summariser imports from scorer).
+GEMINI_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+
 
 # API-side halt: Gemini returned RESOURCE_EXHAUSTED, meaning the daily RPD or RPM quota is gone and no further calls will succeed until the window resets.
 class GeminiQuotaExhausted(Exception):
@@ -34,22 +37,35 @@ def gemini_url(cfg):
 	return f'{cfg.gemini_base_url}/models/{cfg.gemini_model}:generateContent'
 
 
+def _retry_after_seconds(response):
+	# Mirrors summariser._retry_after_seconds: integer form only; HTTP-date form falls back to the backoff schedule since the API never sends it.
+	header = response.headers.get('Retry-After')
+	if header is None:
+		return None
+	try:
+		return int(header)
+	except (TypeError, ValueError):
+		return None
+
+
 def gemini(prompt, api_key, cfg, retries=3, on_attempt=None):
 	# Auth via header rather than ?key= query param keeps the secret out of any URL that may surface in HTTPError messages and downstream logs.
 	headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
 	body = {'contents': [{'parts': [{'text': prompt}]}]}
 	url = gemini_url(cfg)
 
+	last_status = None
 	for attempt in range(retries):
 		if on_attempt:
 			on_attempt()
 		time.sleep(5)
 		r = requests.post(url, headers=headers, json=body, timeout=120)
-		if r.status_code == 429:
-			if _is_quota_exhausted(r):
-				raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
-			wait = 15 * (attempt + 1)
-			print(f'Gemini rate limited, waiting {wait}s')
+		if r.status_code == 429 and _is_quota_exhausted(r):
+			raise GeminiQuotaExhausted('Gemini daily quota exhausted (RESOURCE_EXHAUSTED)')
+		if r.status_code in GEMINI_RETRY_STATUS_CODES:
+			last_status = r.status_code
+			wait = _retry_after_seconds(r) or 15 * (attempt + 1)
+			print(f'Gemini {r.status_code}, retrying in {wait}s')
 			time.sleep(wait)
 			continue
 		r.raise_for_status()
@@ -58,7 +74,7 @@ def gemini(prompt, api_key, cfg, retries=3, on_attempt=None):
 		except (KeyError, IndexError, TypeError) as e:
 			raise ValueError(f'Gemini response missing expected fields: {e}') from e
 
-	raise Exception('Gemini failed after retries')
+	raise Exception(f'Gemini failed after retries (last status {last_status})')
 
 
 def parse_gemini_scores(response_text):
