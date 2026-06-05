@@ -61,7 +61,7 @@ def _form_values(cfg):
 		COPY['config']['queries_label'], value='\n'.join(cfg.search_queries), height=220, key='cfg_queries'
 	)
 	context = st.text_area(COPY['config']['context_label'], value=cfg.research_context, height=320, key='cfg_context')
-	cols = st.columns(3)
+	cols = st.columns(4)
 	threshold = cols[0].number_input(
 		COPY['config']['threshold_label'], min_value=1, max_value=10, value=cfg.relevance_threshold, key='cfg_threshold'
 	)
@@ -75,6 +75,13 @@ def _form_values(cfg):
 		value=cfg.max_per_query,
 		key='cfg_max_per_query',
 	)
+	prefilter_top_n = cols[3].number_input(
+		COPY['config']['prefilter_label'],
+		min_value=1,
+		max_value=200,
+		value=cfg.prefilter_top_n,
+		key='cfg_prefilter_top_n',
+	)
 	model = st.text_input(COPY['config']['model_label'], value=cfg.gemini_model, key='cfg_model')
 	return {
 		'search_queries': [q.strip() for q in queries_text.splitlines() if q.strip()],
@@ -82,6 +89,7 @@ def _form_values(cfg):
 		'relevance_threshold': threshold,
 		'days_back': days_back,
 		'max_per_query': max_per_query,
+		'prefilter_top_n': prefilter_top_n,
 		'gemini_model': model.strip(),
 	}
 

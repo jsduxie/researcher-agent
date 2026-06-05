@@ -24,6 +24,7 @@ DIGEST_KEYS = (
 	'gemini_upload_base_url',
 	'gemini_call_budget',
 	'pdf_max_size_mb',
+	'prefilter_top_n',
 )
 
 
@@ -40,6 +41,7 @@ class Config:
 	gemini_upload_base_url: str
 	gemini_call_budget: int
 	pdf_max_size_mb: int
+	prefilter_top_n: int
 
 
 def _load_prompt(name):
@@ -65,10 +67,10 @@ def load_seed():
 
 
 def load(conn):
-	# Bootstraps app_config from the seed file on first call against an empty table, then returns the current config every time.
+	# Bootstraps app_config from the seed on first call, and backfills keys added after the table was seeded so Config never sees a missing field.
 	data = db.load_config(conn)
-	if not data:
-		seed = load_seed()
-		db.update_config(conn, seed, by='seed')
-		data = seed
+	missing = {k: v for k, v in load_seed().items() if k not in data}
+	if missing:
+		db.update_config(conn, missing, by='seed')
+		data.update(missing)
 	return Config(**data)

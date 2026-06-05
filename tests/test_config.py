@@ -69,7 +69,9 @@ def test_pdf_max_size_mb_is_positive_int():
 	assert _CFG.pdf_max_size_mb > 0
 
 
-@pytest.mark.parametrize('field', ['relevance_threshold', 'days_back', 'max_per_query', 'batch_size'])
+@pytest.mark.parametrize(
+	'field', ['relevance_threshold', 'days_back', 'max_per_query', 'batch_size', 'prefilter_top_n']
+)
 def test_numeric_digest_values_are_positive_ints(field):
 	value = getattr(_CFG, field)
 	assert isinstance(value, int)
@@ -102,9 +104,12 @@ def test_load_raises_on_unexpected_db_key(mocker):
 		config.load(mocker.Mock())
 
 
-def test_load_raises_when_db_is_missing_a_key(mocker):
+def test_load_backfills_missing_keys_from_seed(mocker):
+	# Keys added to Config after a table was seeded must self-migrate on the next load rather than crash the run.
 	partial = dict(_SEED)
-	del partial['gemini_model']
+	del partial['prefilter_top_n']
 	mocker.patch('config.db.load_config', return_value=partial)
-	with pytest.raises(TypeError):
-		config.load(mocker.Mock())
+	update = mocker.patch('config.db.update_config')
+	conn = mocker.Mock()
+	assert config.load(conn) == _CFG
+	update.assert_called_once_with(conn, {'prefilter_top_n': _SEED['prefilter_top_n']}, by='seed')
