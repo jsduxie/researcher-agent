@@ -63,6 +63,34 @@ def test_format_authors_five_truncates_with_et_al():
 	assert _format_authors(authors) == 'A, B, C et al.'
 
 
+def test_format_authors_skips_entries_missing_name():
+	authors = [{'name': 'A. Smith'}, None, {'affiliation': 'MIT'}, {'name': 'B. Jones'}]
+	assert _format_authors(authors) == 'A. Smith, B. Jones'
+
+
+def test_format_authors_skips_none_entry():
+	assert _format_authors([None, {'name': 'A'}]) == 'A'
+
+
+def test_format_authors_skips_non_dict_entry():
+	assert _format_authors(['not a dict', {'name': 'A'}]) == 'A'
+
+
+def test_format_authors_all_malformed_returns_empty_string():
+	assert _format_authors([{}, None]) == ''
+
+
+def test_format_authors_et_al_counts_usable_names_only():
+	# Four raw entries but only three usable; 'et al.' must not appear for authors that cannot be shown.
+	authors = [{'name': 'A'}, None, {'name': 'B'}, {'name': 'C'}]
+	assert _format_authors(authors) == 'A, B, C'
+
+
+def test_build_email_renders_paper_with_all_malformed_authors():
+	paper = {'paperId': 'p1', 'title': 't', 'authors': [{}, None], 'ai_score': 8}
+	assert 't' in build_email([paper], _TEST_CFG)
+
+
 # -- _build_links --
 
 

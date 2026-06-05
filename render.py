@@ -15,10 +15,12 @@ def score_colour(score):
 
 
 def _format_authors(authors):
-	names = ', '.join(a['name'] for a in authors[:3])
-	if len(authors) > 3:
-		names += ' et al.'
-	return names
+	# The API can return null entries or author dicts without a name; match upsert_paper's guard.
+	names = [a['name'] for a in authors if isinstance(a, dict) and a.get('name')]
+	formatted = ', '.join(names[:3])
+	if len(names) > 3:
+		formatted += ' et al.'
+	return formatted
 
 
 def _build_links(paper):
