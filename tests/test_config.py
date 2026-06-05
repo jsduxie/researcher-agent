@@ -85,8 +85,11 @@ def test_numeric_digest_values_are_positive_ints(field):
 def test_load_returns_config_from_populated_table_without_seeding(mocker):
 	mocker.patch('config.db.load_config', return_value=dict(_SEED))
 	update = mocker.patch('config.db.update_config')
+	seed_read = mocker.patch('config.load_seed')
 	assert config.load(mocker.Mock()) == _CFG
 	update.assert_not_called()
+	# A complete table must not touch the seed file; the dashboard calls load() on every page rerun.
+	seed_read.assert_not_called()
 
 
 def test_load_seeds_empty_table_then_returns_seed_values(mocker):
