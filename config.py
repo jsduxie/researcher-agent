@@ -7,7 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 import db
 
 _ROOT = Path(__file__).parent
-_SEED_PATH = _ROOT / 'config' / 'digest.yaml'
+_SEED_PATH = _ROOT / 'config' / 'digest.example.yaml'
 _PROMPTS_DIR = _ROOT / 'prompts'
 _TEMPLATES_DIR = _ROOT / 'templates'
 
@@ -59,7 +59,7 @@ EMAIL_TEMPLATE = _env.get_template('email.html')
 
 
 def load_seed():
-	# The seed file is the source of truth on a fresh DB. After 8d it becomes config/digest.example.yaml with generic content.
+	# Generic example values; they bootstrap an empty app_config table, after which Neon is the source of truth (edit via the dashboard Config page).
 	with open(_SEED_PATH) as f:
 		return yaml.safe_load(f)
 

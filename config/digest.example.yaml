@@ -1,0 +1,19 @@
+search_queries:
+  - 'transformer text classification'
+  - 'explainable AI natural language processing'
+
+research_context: |
+  Replace this with a description of your research. It is sent to Gemini with every
+  batch of abstracts to judge relevance, and the summariser uses it to slant summaries
+  towards your interests. Be specific: topics, methods, datasets, model architectures,
+  and what makes a paper relevant (or irrelevant) to you.
+
+relevance_threshold: 6
+days_back: 14
+max_per_query: 8
+batch_size: 10
+gemini_model: gemini-3.1-flash-lite
+gemini_base_url: https://generativelanguage.googleapis.com/v1beta
+gemini_upload_base_url: https://generativelanguage.googleapis.com/upload/v1beta
+gemini_call_budget: 400
+pdf_max_size_mb: 50

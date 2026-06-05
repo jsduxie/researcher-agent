@@ -191,17 +191,25 @@ section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink'] p {
 	justify-content: center !important;
 }
 
-/* Zero out the default <p> margin Streamlit emits inside markdown blocks and buttons,
-   which otherwise drags content off the row's vertical centre. */
+/* Streamlit's -16px markdown bottom margin drops markdown cells below the row centre; neutralise it so all cells share the centre line. */
+[data-testid='stHorizontalBlock'] [data-testid='stMarkdownContainer'] {
+	margin: 0 !important;
+}
+
+/* The vertical-block wrapper has flex: 1, stretching to the row height and pinning content to the top; centre it so buttons sit on the row centre like markdown cells. */
+[data-testid='stHorizontalBlock'] [data-testid='stVerticalBlock'],
+[data-testid='stHorizontalBlock'] [data-testid='stElementContainer'] {
+	justify-content: center !important;
+}
+
+/* Zero out the default <p> margin Streamlit emits inside markdown blocks and buttons, which otherwise drags content off the row's vertical centre. */
 [data-testid='stHorizontalBlock'] [data-testid='stMarkdownContainer'] p,
 [data-testid='stButton'] button p {
 	margin: 0 !important;
 	line-height: 1.4 !important;
 }
 
-/* Buttons sit inside element-container > stButton wrappers that Streamlit gives
-   non-zero padding/min-height by default. Strip them so the button's bounding
-   box collapses to the same height as a sibling markdown cell. */
+/* Strip the non-zero padding/min-height Streamlit gives the stButton wrappers so the button's bounding box matches a sibling markdown cell. */
 [data-testid='stButton'],
 [data-testid='stButton'] [data-testid='stMarkdownContainer'] {
 	margin: 0 !important;
@@ -212,6 +220,11 @@ section[data-testid='stSidebar'] [data-testid='stPageLink-NavLink'] p {
 hr.row-divider {
 	border: none;
 	border-top: 1px solid var(--rule);
+	margin: 0 !important;
+}
+
+/* The divider's markdown wrapper keeps Streamlit's -16px bottom margin, collapsing the space below each divider while 16px remains above; zero it so row content sits midway between dividers. */
+[data-testid='stMarkdownContainer']:has(hr.row-divider) {
 	margin: 0 !important;
 }
 
@@ -270,7 +283,7 @@ hr.header-divider {
 	font-weight: 500 !important;
 	font-size: 1rem !important;
 	line-height: 1.4 !important;
-	text-align: left !important;
+	text-align: center !important;
 	padding: 0 !important;
 	margin: 0 !important;
 	min-height: 0 !important;
