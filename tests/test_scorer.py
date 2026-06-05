@@ -244,6 +244,66 @@ def test_score_and_summarise_unions_responded_across_batches(mocker):
 	assert responded == {'p1', 'p2', 'p3'}
 
 
+# -- second pass for unresponded papers --
+
+
+def test_score_and_summarise_rescores_failed_batch_in_second_pass(mocker, capsys):
+	# Batch fails outright on pass one (e.g. malformed payload); the second pass re-batches every paper and its results count.
+	papers = [{'paperId': 'p1'}, {'paperId': 'p2'}]
+	scored = [dict(p, ai_score=8) for p in papers]
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=[([], set()), (scored, {'p1', 'p2'})])
+	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert mock_chunk.call_count == 2
+	assert mock_chunk.call_args_list[1].args[0] == papers
+	assert enriched == scored
+	assert responded == {'p1', 'p2'}
+	assert 'second pass' in capsys.readouterr().out
+
+
+def test_score_and_summarise_second_pass_contains_only_unresponded_papers(mocker):
+	# Gemini answered p1 but omitted p2; only p2 goes back.
+	papers = [{'paperId': 'p1'}, {'paperId': 'p2'}]
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=[([], {'p1'}), ([], {'p2'})])
+	score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert mock_chunk.call_args_list[1].args[0] == [{'paperId': 'p2'}]
+
+
+def test_score_and_summarise_skips_second_pass_when_all_responded(mocker):
+	papers = [{'paperId': 'p1'}]
+	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([], {'p1'}))
+	score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	mock_chunk.assert_called_once()
+
+
+def test_score_and_summarise_excludes_papers_without_paper_id_from_second_pass(mocker):
+	# A paper with no paperId can never appear in responded; retrying it could only duplicate an enrichment.
+	papers = [{'title': 'no id'}]
+	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([], set()))
+	score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	mock_chunk.assert_called_once()
+
+
+def test_score_and_summarise_second_pass_halt_preserves_first_pass_results(mocker, capsys):
+	# Quota dies during the recovery pass; everything already scored must survive.
+	papers = [{'paperId': 'p1'}, {'paperId': 'p2'}]
+	first = [{'paperId': 'p1', 'ai_score': 9}]
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=[(first, {'p1'}), GeminiQuotaExhausted('quota')])
+	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert mock_chunk.call_count == 2
+	assert enriched == first
+	assert responded == {'p1'}
+	assert 'Quota exhausted' in capsys.readouterr().out
+
+
+def test_score_and_summarise_runs_exactly_one_recovery_pass(mocker):
+	# Papers that stay unresponded after the second pass wait for the next run; no third pass.
+	papers = [{'paperId': 'p1'}]
+	mock_chunk = mocker.patch('scorer._score_chunk', return_value=([], set()))
+	enriched, responded = score_and_summarise(papers, mocker.Mock(), _TEST_CFG)
+	assert mock_chunk.call_count == 2
+	assert (enriched, responded) == ([], set())
+
+
 # -- gemini (HTTP) --
 
 
