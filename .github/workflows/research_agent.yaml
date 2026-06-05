@@ -8,6 +8,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # Pin the model cache to a path actions/cache can key on; embedder.py loads all-MiniLM-L6-v2 from here.
+  SENTENCE_TRANSFORMERS_HOME: ~/.cache/sentence-transformers
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,8 +27,16 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sentence-transformers
+          key: sentence-transformers-all-MiniLM-L6-v2
+
       - name: Install dependencies
         run: |
+          # CPU wheel first: the default Linux torch wheel bundles CUDA and is ~2GB.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
@@ -84,8 +96,17 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sentence-transformers
+          key: sentence-transformers-all-MiniLM-L6-v2
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          # CPU wheel first: the default Linux torch wheel bundles CUDA and is ~2GB.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
 
       - name: Run research agent
         env:
