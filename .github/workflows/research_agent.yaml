@@ -27,8 +27,9 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Cache embedding model
-        uses: actions/cache@v4
+      - name: Restore embedding model cache
+        id: model-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/sentence-transformers
           key: sentence-transformers-all-MiniLM-L6-v2
@@ -39,6 +40,20 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+
+      - name: Prime embedding model cache
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        # HuggingFace rate-limits anonymous downloads from shared runner IPs; retry with backoff rather than fail the run.
+        run: |
+          for i in 1 2 3; do python -c "import embedder; embedder._model()" && exit 0; echo "model download attempt $i failed, retrying"; sleep $((i*60)); done
+          python -c "import embedder; embedder._model()"
+
+      - name: Save embedding model cache
+        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sentence-transformers
+          key: sentence-transformers-all-MiniLM-L6-v2
 
       - name: Lint
         run: |
@@ -96,8 +111,9 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Cache embedding model
-        uses: actions/cache@v4
+      - name: Restore embedding model cache
+        id: model-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/sentence-transformers
           key: sentence-transformers-all-MiniLM-L6-v2
@@ -107,6 +123,20 @@ jobs:
           # CPU wheel first: the default Linux torch wheel bundles CUDA and is ~2GB.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
+
+      - name: Prime embedding model cache
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        # HuggingFace rate-limits anonymous downloads from shared runner IPs; retry with backoff rather than fail the run.
+        run: |
+          for i in 1 2 3; do python -c "import embedder; embedder._model()" && exit 0; echo "model download attempt $i failed, retrying"; sleep $((i*60)); done
+          python -c "import embedder; embedder._model()"
+
+      - name: Save embedding model cache
+        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sentence-transformers
+          key: sentence-transformers-all-MiniLM-L6-v2
 
       - name: Run research agent
         env:
