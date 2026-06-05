@@ -215,7 +215,7 @@ def test_page_uses_dark_palette_in_css(stub_db):
 	assert '#d99565' in css
 
 
-# -- HTML escaping of upstream strings (PR #32 review) --
+# -- HTML escaping of upstream strings --
 
 
 def test_expander_escapes_paper_title_html(stub_db):

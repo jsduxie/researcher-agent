@@ -71,7 +71,7 @@ def _filters():
 
 @st.dialog(' ', width='large')
 def _show_paper(paper):
-	# Titles, authors, abstracts and summaries originate outside the app (Semantic Scholar / Gemini); escape everything interpolated under unsafe_allow_html (PR #32 review).
+	# Titles, authors, abstracts and summaries originate outside the app (Semantic Scholar / Gemini); escape everything interpolated under unsafe_allow_html.
 	title = html.escape(paper.get('title') or 'Untitled')
 	st.markdown(f'<div class="modal-title">{title}</div>', unsafe_allow_html=True)
 	st.markdown(

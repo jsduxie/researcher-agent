@@ -202,7 +202,7 @@ def test_audit_trail_renders_unknown_actor_glyph_when_changed_by_is_null(stub_db
 
 
 def test_audit_trail_escapes_key_and_changed_by(stub_db):
-	# Keys and actors are DB-derived strings rendered under unsafe_allow_html; hostile content must arrive escaped (PR #32 review).
+	# Keys and actors are DB-derived strings rendered under unsafe_allow_html; hostile content must arrive escaped.
 	stub_db['list_config_history'].return_value = [
 		_make_history_entry(key='<img src=x onerror=y>', changed_by='<script>z</script>')
 	]
