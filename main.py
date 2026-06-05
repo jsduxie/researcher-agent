@@ -10,8 +10,8 @@ import emailer
 import scorer
 import summariser
 from fetcher import FetchError, dedup_papers, fetch_papers
+from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted
 from render import build_email
-from scorer import GeminiBudgetExhausted
 
 _FIXTURES = Path(__file__).parent / 'tests' / 'fixtures'
 DRY_RUN = False
@@ -98,7 +98,7 @@ def _summarise_kept_papers(enriched, database_url):
 			skipped = len(enriched) - i
 			print(f'Budget exhausted, halting summarisation: {e}')
 			break
-		except scorer.GeminiQuotaExhausted as e:
+		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting summarisation: {e}')
 			break
 		if fields:

@@ -2,10 +2,7 @@ import json
 import re
 
 from config import SCORER_PROMPT
-from gemini import GEMINI_RETRY_STATUS_CODES, generate_url, post_with_retry
-from gemini import GeminiBudgetExhausted as GeminiBudgetExhausted
-from gemini import GeminiQuotaExhausted as GeminiQuotaExhausted
-from gemini import _is_quota_exhausted as _is_quota_exhausted
+from gemini import GEMINI_RETRY_STATUS_CODES, GeminiBudgetExhausted, GeminiQuotaExhausted, generate_url, post_with_retry
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)

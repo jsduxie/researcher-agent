@@ -6,15 +6,8 @@ import responses
 
 import config
 import scorer
-from gemini import generate_url
-from scorer import (
-	GeminiBudgetExhausted,
-	GeminiQuotaExhausted,
-	_score_chunk,
-	apply_scores,
-	parse_gemini_scores,
-	score_and_summarise,
-)
+from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_url
+from scorer import _score_chunk, apply_scores, parse_gemini_scores, score_and_summarise
 
 # Tests share the seed-derived cfg; GEMINI_URL and BATCH_SIZE come from it so `responses` mocks match what production builds.
 _TEST_CFG = config.Config(**config.load_seed())

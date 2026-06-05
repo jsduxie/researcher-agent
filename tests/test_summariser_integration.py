@@ -6,14 +6,13 @@ import requests
 import config
 import fetcher
 import summariser
+from gemini import generate_with_file, upload_pdf_to_gemini
 from summariser import (
 	MISSING_FIELD_PLACEHOLDER,
 	SummariserContext,
 	download_pdf,
-	generate_with_file,
 	parse_summary_response,
 	summarise_paper,
-	upload_pdf_to_gemini,
 )
 
 # Live tests run against the seed-derived cfg, the same values a clean production DB bootstraps with.

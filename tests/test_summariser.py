@@ -677,17 +677,17 @@ _PER_DAY_429 = {
 @responses.activate
 @responses.activate
 def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
-	import scorer
+	import gemini
 
 	mocker.patch('summariser.db.get_summary', return_value=None)
-	gemini_fn = mocker.Mock(side_effect=scorer.GeminiQuotaExhausted('quota'))
-	with pytest.raises(scorer.GeminiQuotaExhausted, match='quota'):
+	gemini_fn = mocker.Mock(side_effect=gemini.GeminiQuotaExhausted('quota'))
+	with pytest.raises(gemini.GeminiQuotaExhausted, match='quota'):
 		_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 
 @responses.activate
 def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
-	import scorer
+	import gemini
 
 	responses.get(PDF_URL, body=b'pdf')
 	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
@@ -696,7 +696,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	# PDF path raises quota exhausted; abstract fallback must not run.
-	with pytest.raises(scorer.GeminiQuotaExhausted):
+	with pytest.raises(gemini.GeminiQuotaExhausted):
 		_summarise(
 			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 			gemini_fn,
@@ -710,26 +710,26 @@ def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 
 
 def test_summarise_paper_propagates_budget_exhausted_from_abstract_path(mocker):
-	import scorer
+	import gemini
 
 	mocker.patch('summariser.db.get_summary', return_value=None)
-	gemini_fn = mocker.Mock(side_effect=scorer.GeminiBudgetExhausted('budget'))
-	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
+	gemini_fn = mocker.Mock(side_effect=gemini.GeminiBudgetExhausted('budget'))
+	with pytest.raises(gemini.GeminiBudgetExhausted, match='budget'):
 		_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
 
 
 def test_summarise_paper_propagates_budget_exhausted_from_pdf_path(mocker):
-	import scorer
+	import gemini
 
 	# The PDF path's _post_with_retry fires on_attempt before each post; main wires that to a counter that raises when the budget is reached.
 	def raising_on_call():
-		raise scorer.GeminiBudgetExhausted('budget')
+		raise gemini.GeminiBudgetExhausted('budget')
 
 	mocker.patch('summariser.db.get_summary', return_value=None)
 	mocker.patch('summariser.download_pdf', return_value=b'pdf')
 	gemini_fn = mocker.Mock()
 
-	with pytest.raises(scorer.GeminiBudgetExhausted, match='budget'):
+	with pytest.raises(gemini.GeminiBudgetExhausted, match='budget'):
 		_summarise(
 			{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
 			gemini_fn,
