@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  # Pin the model cache to a path actions/cache can key on; embedder.py loads all-MiniLM-L6-v2 from here.
-  SENTENCE_TRANSFORMERS_HOME: ~/.cache/sentence-transformers
+  # sentence-transformers downloads land in the huggingface hub cache; pin it so actions/cache and the offline flag agree on the path.
+  HF_HOME: /home/runner/.cache/huggingface
 
 jobs:
   test:
@@ -31,8 +31,8 @@ jobs:
         id: model-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/sentence-transformers
-          key: sentence-transformers-all-MiniLM-L6-v2
+          path: /home/runner/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v2
 
       - name: Install dependencies
         run: |
@@ -43,17 +43,22 @@ jobs:
 
       - name: Prime embedding model cache
         if: steps.model-cache.outputs.cache-hit != 'true'
-        # HuggingFace rate-limits anonymous downloads from shared runner IPs; retry with backoff rather than fail the run.
+        # HuggingFace 429s shared runner IPs and the error body can poison config.json; clear partials between backoff retries.
         run: |
-          for i in 1 2 3; do python -c "import embedder; embedder._model()" && exit 0; echo "model download attempt $i failed, retrying"; sleep $((i*60)); done
+          for i in 1 2 3; do
+            python -c "import embedder; embedder._model()" && exit 0
+            echo "model download attempt $i failed, clearing partial cache and retrying"
+            rm -rf "$HF_HOME/hub/models--sentence-transformers--all-MiniLM-L6-v2"
+            sleep $((i*60))
+          done
           python -c "import embedder; embedder._model()"
 
       - name: Save embedding model cache
         if: always() && steps.model-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/sentence-transformers
-          key: sentence-transformers-all-MiniLM-L6-v2
+          path: /home/runner/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v2
 
       - name: Lint
         run: |
@@ -68,6 +73,8 @@ jobs:
         env:
           # PR pushes opt into the long-idle test; push-to-main and the scheduled cron skip it so the post-merge / daily CI stays fast.
           RUN_LONG_INTEGRATION: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+          # The model is primed above; offline mode stops transformers re-contacting rate-limited HuggingFace mid-test.
+          HF_HUB_OFFLINE: '1'
         run: pytest -m integration --cov-append --cov-branch --cov-report=term --junitxml=junit-integration.xml
 
       - name: Coverage reports
@@ -115,8 +122,8 @@ jobs:
         id: model-cache
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/sentence-transformers
-          key: sentence-transformers-all-MiniLM-L6-v2
+          path: /home/runner/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v2
 
       - name: Install dependencies
         run: |
@@ -126,22 +133,29 @@ jobs:
 
       - name: Prime embedding model cache
         if: steps.model-cache.outputs.cache-hit != 'true'
-        # HuggingFace rate-limits anonymous downloads from shared runner IPs; retry with backoff rather than fail the run.
+        # HuggingFace 429s shared runner IPs and the error body can poison config.json; clear partials between backoff retries.
         run: |
-          for i in 1 2 3; do python -c "import embedder; embedder._model()" && exit 0; echo "model download attempt $i failed, retrying"; sleep $((i*60)); done
+          for i in 1 2 3; do
+            python -c "import embedder; embedder._model()" && exit 0
+            echo "model download attempt $i failed, clearing partial cache and retrying"
+            rm -rf "$HF_HOME/hub/models--sentence-transformers--all-MiniLM-L6-v2"
+            sleep $((i*60))
+          done
           python -c "import embedder; embedder._model()"
 
       - name: Save embedding model cache
         if: always() && steps.model-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ~/.cache/sentence-transformers
-          key: sentence-transformers-all-MiniLM-L6-v2
+          path: /home/runner/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v2
 
       - name: Run research agent
         env:
           # Flush stdout/stderr per write so cron output surfaces in real time.
           PYTHONUNBUFFERED: '1'
+          # The model is primed above; offline mode stops transformers re-contacting rate-limited HuggingFace mid-run.
+          HF_HUB_OFFLINE: '1'
           SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
