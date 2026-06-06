@@ -9,8 +9,9 @@ on:
   workflow_dispatch:
 
 env:
-  # sentence-transformers downloads land in the huggingface hub cache; pin it so actions/cache and the offline flag agree on the path.
+  # sentence-transformers reads the model from the huggingface hub cache layout; the cache is seeded from this repo's model-cache release, never from HuggingFace (runner IPs get hard 429s there).
   HF_HOME: /home/runner/.cache/huggingface
+  HF_HUB_OFFLINE: '1'
 
 jobs:
   test:
@@ -41,20 +42,16 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Prime embedding model cache
+      - name: Fetch embedding model from the model-cache release
         if: steps.model-cache.outputs.cache-hit != 'true'
-        # HuggingFace 429s shared runner IPs and the error body can poison config.json; clear partials between backoff retries.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          for i in 1 2 3; do
-            python -c "import embedder; embedder._model()" && exit 0
-            echo "model download attempt $i failed, clearing partial cache and retrying"
-            rm -rf "$HF_HOME/hub/models--sentence-transformers--all-MiniLM-L6-v2"
-            sleep $((i*60))
-          done
-          python -c "import embedder; embedder._model()"
+          mkdir -p "$HF_HOME"
+          gh release download model-cache-v1 --repo ${{ github.repository }} --pattern 'all-MiniLM-L6-v2-hf-cache.tar.gz' --output - | tar -xz -C "$HF_HOME"
 
       - name: Save embedding model cache
-        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        if: steps.model-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: /home/runner/.cache/huggingface
@@ -73,8 +70,6 @@ jobs:
         env:
           # PR pushes opt into the long-idle test; push-to-main and the scheduled cron skip it so the post-merge / daily CI stays fast.
           RUN_LONG_INTEGRATION: ${{ github.event_name == 'pull_request' && '1' || '0' }}
-          # The model is primed above; offline mode stops transformers re-contacting rate-limited HuggingFace mid-test.
-          HF_HUB_OFFLINE: '1'
         run: pytest -m integration --cov-append --cov-branch --cov-report=term --junitxml=junit-integration.xml
 
       - name: Coverage reports
@@ -131,20 +126,16 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
-      - name: Prime embedding model cache
+      - name: Fetch embedding model from the model-cache release
         if: steps.model-cache.outputs.cache-hit != 'true'
-        # HuggingFace 429s shared runner IPs and the error body can poison config.json; clear partials between backoff retries.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          for i in 1 2 3; do
-            python -c "import embedder; embedder._model()" && exit 0
-            echo "model download attempt $i failed, clearing partial cache and retrying"
-            rm -rf "$HF_HOME/hub/models--sentence-transformers--all-MiniLM-L6-v2"
-            sleep $((i*60))
-          done
-          python -c "import embedder; embedder._model()"
+          mkdir -p "$HF_HOME"
+          gh release download model-cache-v1 --repo ${{ github.repository }} --pattern 'all-MiniLM-L6-v2-hf-cache.tar.gz' --output - | tar -xz -C "$HF_HOME"
 
       - name: Save embedding model cache
-        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        if: steps.model-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: /home/runner/.cache/huggingface
@@ -154,8 +145,6 @@ jobs:
         env:
           # Flush stdout/stderr per write so cron output surfaces in real time.
           PYTHONUNBUFFERED: '1'
-          # The model is primed above; offline mode stops transformers re-contacting rate-limited HuggingFace mid-run.
-          HF_HUB_OFFLINE: '1'
           SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
