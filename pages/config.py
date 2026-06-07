@@ -55,6 +55,12 @@ def _render_sidebar(current):
 				st.page_link(path, label=label)
 
 
+def _num(col, label_key, value, bounds, state_key):
+	return col.number_input(
+		COPY['config'][label_key], min_value=bounds[0], max_value=bounds[1], value=value, key=state_key
+	)
+
+
 def _form_values(cfg):
 	# Queries round-trip through the textarea one per line; blank lines are dropped on parse so stray newlines never reach the fetcher.
 	queries_text = st.text_area(
@@ -62,69 +68,33 @@ def _form_values(cfg):
 	)
 	context = st.text_area(COPY['config']['context_label'], value=cfg.research_context, height=320, key='cfg_context')
 	cols = st.columns(4)
-	threshold = cols[0].number_input(
-		COPY['config']['threshold_label'], min_value=1, max_value=10, value=cfg.relevance_threshold, key='cfg_threshold'
-	)
-	days_back = cols[1].number_input(
-		COPY['config']['days_back_label'], min_value=1, max_value=365, value=cfg.days_back, key='cfg_days_back'
-	)
-	max_per_query = cols[2].number_input(
-		COPY['config']['max_per_query_label'],
-		min_value=1,
-		max_value=100,
-		value=cfg.max_per_query,
-		key='cfg_max_per_query',
-	)
-	prefilter_top_n = cols[3].number_input(
-		COPY['config']['prefilter_label'],
-		min_value=1,
-		max_value=200,
-		value=cfg.prefilter_top_n,
-		key='cfg_prefilter_top_n',
-	)
+	threshold = _num(cols[0], 'threshold_label', cfg.relevance_threshold, (1, 10), 'cfg_threshold')
+	days_back = _num(cols[1], 'days_back_label', cfg.days_back, (1, 365), 'cfg_days_back')
+	max_per_query = _num(cols[2], 'max_per_query_label', cfg.max_per_query, (1, 100), 'cfg_max_per_query')
+	prefilter_top_n = _num(cols[3], 'prefilter_label', cfg.prefilter_top_n, (1, 200), 'cfg_prefilter_top_n')
 	fewshot_cols = st.columns(3)
-	fewshot_min_ratings = fewshot_cols[0].number_input(
-		COPY['config']['fewshot_min_ratings_label'],
-		min_value=1,
-		max_value=100,
-		value=cfg.fewshot_min_ratings,
-		key='cfg_fewshot_min_ratings',
+	fewshot_min_ratings = _num(
+		fewshot_cols[0], 'fewshot_min_ratings_label', cfg.fewshot_min_ratings, (1, 100), 'cfg_fewshot_min_ratings'
 	)
-	fewshot_min_feedback = fewshot_cols[1].number_input(
-		COPY['config']['fewshot_min_feedback_label'],
-		min_value=1,
-		max_value=100,
-		value=cfg.fewshot_min_feedback,
-		key='cfg_fewshot_min_feedback',
+	fewshot_min_feedback = _num(
+		fewshot_cols[1], 'fewshot_min_feedback_label', cfg.fewshot_min_feedback, (1, 100), 'cfg_fewshot_min_feedback'
 	)
-	fewshot_neighbours = fewshot_cols[2].number_input(
-		COPY['config']['fewshot_neighbours_label'],
-		min_value=1,
-		max_value=20,
-		value=cfg.fewshot_neighbours,
-		key='cfg_fewshot_neighbours',
+	fewshot_neighbours = _num(
+		fewshot_cols[2], 'fewshot_neighbours_label', cfg.fewshot_neighbours, (1, 20), 'cfg_fewshot_neighbours'
 	)
 	rating_cols = st.columns(3)
-	fewshot_good_rating = rating_cols[0].number_input(
-		COPY['config']['fewshot_good_rating_label'],
-		min_value=1,
-		max_value=5,
-		value=cfg.fewshot_good_rating,
-		key='cfg_fewshot_good_rating',
+	fewshot_good_rating = _num(
+		rating_cols[0], 'fewshot_good_rating_label', cfg.fewshot_good_rating, (1, 5), 'cfg_fewshot_good_rating'
 	)
-	fewshot_bad_rating = rating_cols[1].number_input(
-		COPY['config']['fewshot_bad_rating_label'],
-		min_value=1,
-		max_value=5,
-		value=cfg.fewshot_bad_rating,
-		key='cfg_fewshot_bad_rating',
+	fewshot_bad_rating = _num(
+		rating_cols[1], 'fewshot_bad_rating_label', cfg.fewshot_bad_rating, (1, 5), 'cfg_fewshot_bad_rating'
 	)
-	calibration_max_examples = rating_cols[2].number_input(
-		COPY['config']['calibration_max_examples_label'],
-		min_value=1,
-		max_value=50,
-		value=cfg.calibration_max_examples,
-		key='cfg_calibration_max_examples',
+	calibration_max_examples = _num(
+		rating_cols[2],
+		'calibration_max_examples_label',
+		cfg.calibration_max_examples,
+		(1, 50),
+		'cfg_calibration_max_examples',
 	)
 	model = st.text_input(COPY['config']['model_label'], value=cfg.gemini_model, key='cfg_model')
 	return {
