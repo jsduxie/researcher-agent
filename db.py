@@ -429,6 +429,8 @@ _LIST_RUNS_COLUMNS = (
 	'papers_kept',
 	'queries_attempted',
 	'queries_errored',
+	'scorer_prompt',
+	'summariser_prompt',
 )
 
 _LIST_PAPERS_FOR_RUN_COLUMNS = (*_SEARCH_PAPERS_COLUMNS, 'was_new')
@@ -503,8 +505,8 @@ def count_papers(conn, q=None, date_range=None):
 def list_runs(conn, limit=50):
 	with conn.cursor() as cur:
 		cur.execute(
-			'SELECT id, started_at, finished_at, papers_fetched, papers_kept, queries_attempted, queries_errored '
-			'FROM runs ORDER BY started_at DESC LIMIT %s',
+			'SELECT id, started_at, finished_at, papers_fetched, papers_kept, queries_attempted, queries_errored, '
+			'scorer_prompt, summariser_prompt FROM runs ORDER BY started_at DESC LIMIT %s',
 			(limit,),
 		)
 		rows = cur.fetchall()

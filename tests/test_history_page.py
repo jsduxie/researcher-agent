@@ -215,6 +215,38 @@ def test_page_uses_dark_palette_in_css(stub_db):
 	assert '#d99565' in css
 
 
+# -- logged prompts --
+
+
+def test_expander_renders_logged_prompts_when_present(stub_db):
+	stub_db['list_runs'].return_value = [_make_run(scorer_prompt='SCORER BODY', summariser_prompt='SUMM BODY')]
+	at = AppTest.from_file(_APP_PATH).run()
+	labels = [exp.label for exp in at.expander]
+	assert _COPY['history']['scorer_prompt_label'] in labels
+	assert _COPY['history']['summariser_prompt_label'] in labels
+	code_bodies = [c.value for c in at.code]
+	assert 'SCORER BODY' in code_bodies
+	assert 'SUMM BODY' in code_bodies
+
+
+def test_expander_renders_only_scorer_prompt_when_summariser_is_none(stub_db):
+	stub_db['list_runs'].return_value = [_make_run(scorer_prompt='SCORER BODY', summariser_prompt=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	labels = [exp.label for exp in at.expander]
+	assert _COPY['history']['scorer_prompt_label'] in labels
+	assert _COPY['history']['summariser_prompt_label'] not in labels
+
+
+def test_expander_renders_no_prompt_section_when_run_has_no_prompts(stub_db):
+	# Pre-migration runs and runs whose stages had no papers carry NULL prompt columns; the History page surfaces nothing new for them.
+	stub_db['list_runs'].return_value = [_make_run(scorer_prompt=None, summariser_prompt=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	labels = [exp.label for exp in at.expander]
+	assert _COPY['history']['scorer_prompt_label'] not in labels
+	assert _COPY['history']['summariser_prompt_label'] not in labels
+	assert not at.code
+
+
 # -- HTML escaping of upstream strings --
 
 

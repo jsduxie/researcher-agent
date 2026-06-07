@@ -773,6 +773,7 @@ def test_list_runs_returns_runs_latest_first(conn):
 def test_list_runs_returns_full_row_shape(conn):
 	run_id = db.start_run(conn, papers_fetched=42)
 	db.finish_run(conn, run_id, papers_kept=7, queries_attempted=8, queries_errored=1)
+	db.record_run_prompts(conn, run_id, scorer_prompt='SCORER TEXT', summariser_prompt='SUMM TEXT')
 	(run,) = db.list_runs(conn)
 	assert run['id'] == run_id
 	assert run['papers_fetched'] == 42
@@ -781,6 +782,8 @@ def test_list_runs_returns_full_row_shape(conn):
 	assert run['queries_errored'] == 1
 	assert run['started_at'] is not None
 	assert run['finished_at'] is not None
+	assert run['scorer_prompt'] == 'SCORER TEXT'
+	assert run['summariser_prompt'] == 'SUMM TEXT'
 
 
 def test_list_runs_respects_limit(conn):
