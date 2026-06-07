@@ -69,6 +69,7 @@ def _make_paper(**overrides):
 		'findings': None,
 		'relevance': None,
 		'limitations': None,
+		'summary_source': None,
 		'latest_rating': 4,
 		'was_new': True,
 	}
@@ -166,6 +167,27 @@ def test_expander_renders_authors_year_and_latest_rating(stub_db):
 	assert any('Smith' in m for m in meta_blocks)
 	assert any('2024' in m for m in meta_blocks)
 	assert any(f'5 {_COPY["icons"]["rating_star"]}' in m for m in meta_blocks)
+
+
+def test_expander_renders_summary_source_when_present(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [
+		_make_paper(paper_id='p1', summary_source='pdf'),
+		_make_paper(paper_id='p2', summary_source='abstract'),
+	]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert any(_COPY['history']['source_pdf'] in m for m in meta_blocks)
+	assert any(_COPY['history']['source_abstract'] in m for m in meta_blocks)
+
+
+def test_expander_omits_summary_source_when_absent(stub_db):
+	stub_db['list_runs'].return_value = [_make_run()]
+	stub_db['list_papers_for_run'].return_value = [_make_paper(summary_source=None)]
+	at = AppTest.from_file(_APP_PATH).run()
+	meta_blocks = [m.value for m in at.markdown if 'class="history-paper-meta"' in m.value]
+	assert all(_COPY['history']['source_abstract'] not in m for m in meta_blocks)
+	assert all(_COPY['history']['source_pdf'] not in m for m in meta_blocks)
 
 
 def test_expander_renders_unrated_glyph_when_paper_has_no_rating(stub_db):
