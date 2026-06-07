@@ -304,7 +304,7 @@ def get_latest_field_feedback(conn, paper_id):
 	return {field: {'rating': rating, 'correction': correction} for field, rating, correction in rows}
 
 
-# -- few-shot retrieval (pgvector cosine similarity over papers carrying feedback) --
+# few-shot retrieval using pgvector cosine similarity
 
 
 _SIMILAR_RATED_PAPERS_SQL = """
@@ -325,7 +325,7 @@ _SIMILAR_RATED_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract', 'latest_rating
 
 
 def similar_rated_papers(conn, embedding, limit, exclude_id=None):
-	# Few-shot calibration source: rated papers ranked by cosine distance (<=>) to the query embedding. IS DISTINCT FROM keeps a paper out of its own example set while a NULL exclude_id excludes nothing.
+	# IS DISTINCT FROM keeps a paper out of its own example set while a NULL exclude_id excludes nothing.
 	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
 	with conn.cursor() as cur:
 		cur.execute(_SIMILAR_RATED_PAPERS_SQL, (exclude_id, serialised, limit))
@@ -350,7 +350,7 @@ _SIMILAR_FEEDBACK_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract')
 
 
 def similar_feedback_papers(conn, embedding, limit, exclude_id=None):
-	# Same ranking as similar_rated_papers but gated on summary_feedback; attaches the latest per-field rating+correction so the summariser can pick good (>=4) and bad (<=2) shapes.
+	# Attaches the latest per-field rating and correction so the summariser can pick good and bad shapes.
 	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
 	with conn.cursor() as cur:
 		cur.execute(_SIMILAR_FEEDBACK_PAPERS_SQL, (exclude_id, serialised, limit))
