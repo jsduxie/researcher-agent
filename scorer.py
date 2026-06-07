@@ -6,24 +6,22 @@ from gemini import GEMINI_RETRY_STATUS_CODES, GeminiBudgetExhausted, GeminiQuota
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
-# Cap the union of per-paper top-3 retrievals so a large batch can't bloat the prompt past the calibration signal a handful of examples already gives.
-_CALIBRATION_MAX_EXAMPLES = 8
 # Abstracts in calibration examples are clipped; the rating and a gist are the signal, the full text would only spend prompt budget.
 _CALIBRATION_ABSTRACT_CHARS = 300
 
 
-def build_calibration_block(papers, retrieve, per_paper=3):
-	# Union the top per_paper most similar rated papers across the batch, dedup by paper_id, cap, and render via the calibration prompt templates. Papers without an embedding are skipped so the --no-prefilter path degrades to no calibration.
+def build_calibration_block(papers, retrieve, cfg):
+	# Union the top fewshot_neighbours most similar rated papers across the batch, dedup by paper_id, cap, and render via the calibration prompt templates. Papers without an embedding are skipped so the --no-prefilter path degrades to no calibration.
 	seen = {}
 	for paper in papers:
 		embedding = paper.get('_embedding')
 		if embedding is None:
 			continue
-		for example in retrieve(embedding, per_paper):
+		for example in retrieve(embedding, cfg.fewshot_neighbours):
 			paper_id = example.get('paper_id')
 			if paper_id is not None and paper_id not in seen:
 				seen[paper_id] = example
-	examples = list(seen.values())[:_CALIBRATION_MAX_EXAMPLES]
+	examples = list(seen.values())[: cfg.calibration_max_examples]
 	if not examples:
 		return ''
 	lines = [

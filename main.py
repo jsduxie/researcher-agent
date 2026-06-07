@@ -199,21 +199,18 @@ def _prefilter_scoring_queue(papers, database_url):
 	return kept
 
 
-_CALIBRATION_MIN_RATINGS = 5
-
-
 def _build_scoring_calibration(database_url, papers, no_fewshot=False):
 	# Layer 1 of the feedback loop: inject similar rated papers as scorer calibration, but only once enough ratings exist for the signal to mean anything. Below the gate (or with no DB / no embeddings / --no-fewshot) the prompt stays byte-identical to the uncalibrated path.
 	if no_fewshot or database_url is None or not papers:
 		return ''
 	with db.session(database_url) as conn:
-		if db.count_ratings(conn) < _CALIBRATION_MIN_RATINGS:
+		if db.count_ratings(conn) < _CFG.fewshot_min_ratings:
 			return ''
 
 		def retrieve(embedding, limit):
 			return db.similar_rated_papers(conn, embedding, limit)
 
-		block = scorer.build_calibration_block(papers, retrieve)
+		block = scorer.build_calibration_block(papers, retrieve, _CFG)
 	if block:
 		print('Few-shot calibration: injected rated examples into the scorer prompt')
 	return block

@@ -81,6 +81,12 @@ def test_form_prepopulates_context_numbers_and_model(stub_db):
 	assert at.number_input(key='cfg_days_back').value == _SEED['days_back']
 	assert at.number_input(key='cfg_max_per_query').value == _SEED['max_per_query']
 	assert at.number_input(key='cfg_prefilter_top_n').value == _SEED['prefilter_top_n']
+	assert at.number_input(key='cfg_fewshot_min_ratings').value == _SEED['fewshot_min_ratings']
+	assert at.number_input(key='cfg_fewshot_min_feedback').value == _SEED['fewshot_min_feedback']
+	assert at.number_input(key='cfg_fewshot_neighbours').value == _SEED['fewshot_neighbours']
+	assert at.number_input(key='cfg_fewshot_good_rating').value == _SEED['fewshot_good_rating']
+	assert at.number_input(key='cfg_fewshot_bad_rating').value == _SEED['fewshot_bad_rating']
+	assert at.number_input(key='cfg_calibration_max_examples').value == _SEED['calibration_max_examples']
 	assert at.text_input(key='cfg_model').value == _SEED['gemini_model']
 
 
@@ -95,6 +101,12 @@ def test_form_does_not_expose_infrastructure_keys(stub_db):
 		'cfg_days_back',
 		'cfg_max_per_query',
 		'cfg_prefilter_top_n',
+		'cfg_fewshot_min_ratings',
+		'cfg_fewshot_min_feedback',
+		'cfg_fewshot_neighbours',
+		'cfg_fewshot_good_rating',
+		'cfg_fewshot_bad_rating',
+		'cfg_calibration_max_examples',
 		'cfg_model',
 	}
 
@@ -133,6 +145,14 @@ def test_submit_writes_changed_prefilter_top_n(stub_db):
 	at.number_input(key='cfg_prefilter_top_n').set_value(50)
 	_submit(at)
 	assert stub_db['update_config'].call_args.args[1] == {'prefilter_top_n': 50}
+
+
+def test_submit_writes_changed_fewshot_knobs(stub_db):
+	at = AppTest.from_file(_APP_PATH).run()
+	at.number_input(key='cfg_fewshot_min_ratings').set_value(8)
+	at.number_input(key='cfg_calibration_max_examples').set_value(12)
+	_submit(at)
+	assert stub_db['update_config'].call_args.args[1] == {'fewshot_min_ratings': 8, 'calibration_max_examples': 12}
 
 
 def test_queries_textarea_parses_one_query_per_line_dropping_blanks(stub_db):

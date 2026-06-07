@@ -70,7 +70,20 @@ def test_pdf_max_size_mb_is_positive_int():
 
 
 @pytest.mark.parametrize(
-	'field', ['relevance_threshold', 'days_back', 'max_per_query', 'batch_size', 'prefilter_top_n']
+	'field',
+	[
+		'relevance_threshold',
+		'days_back',
+		'max_per_query',
+		'batch_size',
+		'prefilter_top_n',
+		'fewshot_min_ratings',
+		'fewshot_min_feedback',
+		'fewshot_good_rating',
+		'fewshot_bad_rating',
+		'fewshot_neighbours',
+		'calibration_max_examples',
+	],
 )
 def test_numeric_digest_values_are_positive_ints(field):
 	value = getattr(_CFG, field)

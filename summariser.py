@@ -16,13 +16,6 @@ _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
 # Prompt uses `relevance_to_research` for clarity; DB column is `relevance`. Map at this boundary so downstream code aligns with the schema.
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
-# Layer 1 of the feedback loop: below this many feedback rows the signal is too thin to shape the prompt, so few-shot stays off and the prompt is byte-identical.
-_FEWSHOT_MIN_FEEDBACK = 5
-_FEWSHOT_GOOD_RATING = 4
-_FEWSHOT_BAD_RATING = 2
-# Top-N most similar reviewed papers pulled per summarised paper; 3 keeps the block short while still spanning a few tastes.
-_FEWSHOT_NEIGHBOURS = 3
-
 
 @dataclass
 class SummariserContext:
@@ -75,20 +68,20 @@ def _build_fewshot_block(paper_id, ctx):
 	if not ctx.fewshot_enabled or not ctx.database_url or not paper_id:
 		return ''
 	with db.session(ctx.database_url) as conn:
-		if db.count_summary_feedback(conn) < _FEWSHOT_MIN_FEEDBACK:
+		if db.count_summary_feedback(conn) < ctx.cfg.fewshot_min_feedback:
 			return ''
 		embedding = db.get_paper_embedding(conn, paper_id)
 		if embedding is None:
 			return ''
-		neighbours = db.similar_feedback_papers(conn, embedding, _FEWSHOT_NEIGHBOURS, exclude_id=paper_id)
-	block = build_fewshot_block(neighbours)
+		neighbours = db.similar_feedback_papers(conn, embedding, ctx.cfg.fewshot_neighbours, exclude_id=paper_id)
+	block = build_fewshot_block(neighbours, ctx.cfg)
 	if block:
 		print('Few-shot summariser: injected field-feedback examples into the prompt')
 	return block
 
 
-def build_fewshot_block(feedback_papers):
-	# Render the latest per-field feedback of similar reviewed papers: fields rated >=4 become good-shape examples, fields rated <=2 become corrections to avoid. Empty when neither bucket has anything.
+def build_fewshot_block(feedback_papers, cfg):
+	# Render the latest per-field feedback of similar reviewed papers: fields rated at/above the good cutoff become good-shape examples, fields at/below the bad cutoff become corrections to avoid. Empty when neither bucket has anything.
 	good_lines = []
 	bad_lines = []
 	for paper in feedback_papers:
@@ -97,9 +90,9 @@ def build_fewshot_block(feedback_papers):
 			rating = entry.get('rating')
 			if rating is None:
 				continue
-			if rating >= _FEWSHOT_GOOD_RATING:
+			if rating >= cfg.fewshot_good_rating:
 				good_lines.append(SUMMARISER_FEWSHOT_GOOD.format(field=field, title=title).strip())
-			elif rating <= _FEWSHOT_BAD_RATING and entry.get('correction'):
+			elif rating <= cfg.fewshot_bad_rating and entry.get('correction'):
 				bad_lines.append(
 					SUMMARISER_FEWSHOT_BAD.format(field=field, title=title, correction=entry['correction']).strip()
 				)

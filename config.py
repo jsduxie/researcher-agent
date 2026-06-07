@@ -25,6 +25,12 @@ DIGEST_KEYS = (
 	'gemini_call_budget',
 	'pdf_max_size_mb',
 	'prefilter_top_n',
+	'fewshot_min_ratings',
+	'fewshot_min_feedback',
+	'fewshot_good_rating',
+	'fewshot_bad_rating',
+	'fewshot_neighbours',
+	'calibration_max_examples',
 )
 
 
@@ -42,6 +48,12 @@ class Config:
 	gemini_call_budget: int
 	pdf_max_size_mb: int
 	prefilter_top_n: int
+	fewshot_min_ratings: int
+	fewshot_min_feedback: int
+	fewshot_good_rating: int
+	fewshot_bad_rating: int
+	fewshot_neighbours: int
+	calibration_max_examples: int
 
 
 def _load_prompt(name):
