@@ -488,6 +488,136 @@ def test_get_latest_field_feedback_returns_empty_dict_when_no_rows(conn):
 	assert db.get_latest_field_feedback(conn, 'p1') == {}
 
 
+# -- few-shot retrieval (real pgvector ordering + latest-row semantics) --
+
+
+def _vec(*head):
+	# papers.embedding is vector(384), so every embedding (query or stored) must have 384 dims; only the leading components carry the test's distance signal.
+	return list(head) + [0.0] * (384 - len(head))
+
+
+def _embed(conn, paper_id, vector):
+	db.set_paper_embedding(conn, paper_id, vector)
+
+
+def test_similar_rated_papers_orders_nearest_first_by_cosine_distance(conn):
+	# query is closest to near, then mid, then far; all three are rated and embedded.
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'near'})
+	db.upsert_paper(conn, {'paperId': 'mid'})
+	db.upsert_paper(conn, {'paperId': 'far'})
+	_embed(conn, 'near', _vec(0.99, 0.1, 0.0))
+	_embed(conn, 'mid', _vec(0.5, 0.5, 0.0))
+	_embed(conn, 'far', _vec(-1.0, 0.0, 0.0))
+	for pid in ('near', 'mid', 'far'):
+		db.insert_rating(conn, pid, 3)
+	result = db.similar_rated_papers(conn, query, limit=3)
+	assert [p['paper_id'] for p in result] == ['near', 'mid', 'far']
+
+
+def test_similar_rated_papers_excludes_unrated_and_unembedded_papers(conn):
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'rated'})
+	db.upsert_paper(conn, {'paperId': 'embedded-no-rating'})
+	db.upsert_paper(conn, {'paperId': 'rated-no-embedding'})
+	_embed(conn, 'rated', _vec(1.0, 0.0, 0.0))
+	_embed(conn, 'embedded-no-rating', _vec(1.0, 0.0, 0.0))
+	db.insert_rating(conn, 'rated', 4)
+	db.insert_rating(conn, 'rated-no-embedding', 5)
+	result = db.similar_rated_papers(conn, query, limit=10)
+	assert [p['paper_id'] for p in result] == ['rated']
+
+
+def test_similar_rated_papers_excludes_given_paper_id(conn):
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'self'})
+	db.upsert_paper(conn, {'paperId': 'other'})
+	_embed(conn, 'self', _vec(1.0, 0.0, 0.0))
+	_embed(conn, 'other', _vec(0.9, 0.1, 0.0))
+	db.insert_rating(conn, 'self', 3)
+	db.insert_rating(conn, 'other', 4)
+	result = db.similar_rated_papers(conn, query, limit=10, exclude_id='self')
+	assert [p['paper_id'] for p in result] == ['other']
+
+
+def test_similar_rated_papers_returns_latest_rating_per_paper(conn):
+	db.upsert_paper(conn, {'paperId': 'p1', 'title': 'T', 'abstract': 'A'})
+	_embed(conn, 'p1', _vec(1.0, 0.0, 0.0))
+	db.insert_rating(conn, 'p1', 2)
+	db.insert_rating(conn, 'p1', 5)
+	(paper,) = db.similar_rated_papers(conn, _vec(1.0, 0.0, 0.0), limit=3)
+	assert paper['title'] == 'T'
+	assert paper['abstract'] == 'A'
+	assert paper['latest_rating'] == 5
+
+
+def test_similar_rated_papers_respects_limit(conn):
+	for i in range(4):
+		db.upsert_paper(conn, {'paperId': f'p{i}'})
+		_embed(conn, f'p{i}', _vec(1.0, 0.0, 0.0))
+		db.insert_rating(conn, f'p{i}', 3)
+	assert len(db.similar_rated_papers(conn, _vec(1.0, 0.0, 0.0), limit=2)) == 2
+
+
+def test_similar_feedback_papers_orders_nearest_first_and_attaches_latest_feedback(conn):
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'near', 'title': 'Near'})
+	db.upsert_paper(conn, {'paperId': 'far', 'title': 'Far'})
+	_embed(conn, 'near', _vec(0.99, 0.1, 0.0))
+	_embed(conn, 'far', _vec(-1.0, 0.0, 0.0))
+	db.insert_summary_feedback(conn, 'near', 'methodology', rating=2)
+	db.insert_summary_feedback(conn, 'near', 'methodology', rating=5, correction='clearer')
+	db.insert_summary_feedback(conn, 'far', 'findings', rating=4)
+	result = db.similar_feedback_papers(conn, query, limit=3)
+	assert [p['paper_id'] for p in result] == ['near', 'far']
+	# Latest-row semantics: methodology resolves to the second (rating 5) row.
+	assert result[0]['feedback'] == {'methodology': {'rating': 5, 'correction': 'clearer'}}
+	assert result[1]['feedback'] == {'findings': {'rating': 4, 'correction': None}}
+
+
+def test_similar_feedback_papers_excludes_papers_without_feedback_or_embedding(conn):
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'with-feedback'})
+	db.upsert_paper(conn, {'paperId': 'embedded-no-feedback'})
+	db.upsert_paper(conn, {'paperId': 'feedback-no-embedding'})
+	_embed(conn, 'with-feedback', _vec(1.0, 0.0, 0.0))
+	_embed(conn, 'embedded-no-feedback', _vec(1.0, 0.0, 0.0))
+	db.insert_summary_feedback(conn, 'with-feedback', 'methodology', rating=4)
+	db.insert_summary_feedback(conn, 'feedback-no-embedding', 'methodology', rating=4)
+	result = db.similar_feedback_papers(conn, query, limit=10)
+	assert [p['paper_id'] for p in result] == ['with-feedback']
+
+
+def test_similar_feedback_papers_excludes_given_paper_id(conn):
+	query = _vec(1.0, 0.0, 0.0)
+	db.upsert_paper(conn, {'paperId': 'self'})
+	db.upsert_paper(conn, {'paperId': 'other'})
+	_embed(conn, 'self', _vec(1.0, 0.0, 0.0))
+	_embed(conn, 'other', _vec(0.9, 0.1, 0.0))
+	db.insert_summary_feedback(conn, 'self', 'methodology', rating=3)
+	db.insert_summary_feedback(conn, 'other', 'findings', rating=4)
+	result = db.similar_feedback_papers(conn, query, limit=10, exclude_id='self')
+	assert [p['paper_id'] for p in result] == ['other']
+
+
+def test_count_ratings_counts_every_appended_row(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	db.upsert_paper(conn, {'paperId': 'p2'})
+	assert db.count_ratings(conn) == 0
+	db.insert_rating(conn, 'p1', 3)
+	db.insert_rating(conn, 'p1', 5)
+	db.insert_rating(conn, 'p2', 4)
+	assert db.count_ratings(conn) == 3
+
+
+def test_count_summary_feedback_counts_every_appended_row(conn):
+	db.upsert_paper(conn, {'paperId': 'p1'})
+	assert db.count_summary_feedback(conn) == 0
+	db.insert_summary_feedback(conn, 'p1', 'methodology', rating=4)
+	db.insert_summary_feedback(conn, 'p1', 'methodology', rating=2, correction='redo')
+	assert db.count_summary_feedback(conn) == 2
+
+
 # -- search_papers --
 
 

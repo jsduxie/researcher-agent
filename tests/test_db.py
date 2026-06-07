@@ -790,6 +790,127 @@ def test_get_latest_field_feedback_propagates_database_error(mock_conn):
 		db.get_latest_field_feedback(mock_conn, 'abc')
 
 
+# -- similar_rated_papers --
+
+
+def test_similar_rated_papers_orders_by_cosine_distance_over_rated_embedded_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.similar_rated_papers(mock_conn, [0.1, 0.2, 0.3], limit=3)
+	sql, params = _cursor(mock_conn).execute.call_args.args
+	assert 'papers.embedding IS NOT NULL' in sql
+	assert 'EXISTS (SELECT 1 FROM ratings' in sql
+	assert 'ORDER BY papers.embedding <=> %s::vector' in sql
+	assert 'LIMIT %s' in sql
+	# Embedding serialised exactly like set_paper_embedding, bound as the distance operand.
+	assert params == (None, '[0.1,0.2,0.3]', 3)
+
+
+def test_similar_rated_papers_excludes_given_paper_id(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.similar_rated_papers(mock_conn, [0.1], limit=3, exclude_id='self')
+	sql, params = _cursor(mock_conn).execute.call_args.args
+	assert 'papers.paper_id IS DISTINCT FROM %s' in sql
+	assert params == ('self', '[0.1]', 3)
+
+
+def test_similar_rated_papers_maps_rows_to_dicts_with_latest_rating(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [('p1', 't1', 'a1', 5), ('p2', 't2', None, 2)]
+	assert db.similar_rated_papers(mock_conn, [0.1], limit=3) == [
+		{'paper_id': 'p1', 'title': 't1', 'abstract': 'a1', 'latest_rating': 5},
+		{'paper_id': 'p2', 'title': 't2', 'abstract': None, 'latest_rating': 2},
+	]
+
+
+def test_similar_rated_papers_returns_empty_when_no_rated_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.similar_rated_papers(mock_conn, [0.1], limit=3) == []
+
+
+def test_similar_rated_papers_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.similar_rated_papers(mock_conn, [0.1], limit=3)
+
+
+# -- similar_feedback_papers --
+
+
+def test_similar_feedback_papers_orders_by_cosine_distance_over_feedback_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.similar_feedback_papers(mock_conn, [0.1, 0.2], limit=3)
+	# First execute is the paper select; the per-field feedback fetch only fires per returned row.
+	sql, params = _cursor(mock_conn).execute.call_args_list[0].args
+	assert 'EXISTS (SELECT 1 FROM summary_feedback' in sql
+	assert 'ORDER BY papers.embedding <=> %s::vector' in sql
+	assert params == (None, '[0.1,0.2]', 3)
+
+
+def test_similar_feedback_papers_excludes_given_paper_id(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.similar_feedback_papers(mock_conn, [0.1], limit=3, exclude_id='self')
+	sql, params = _cursor(mock_conn).execute.call_args_list[0].args
+	assert 'papers.paper_id IS DISTINCT FROM %s' in sql
+	assert params == ('self', '[0.1]', 3)
+
+
+def test_similar_feedback_papers_attaches_latest_field_feedback_per_paper(mock_conn):
+	# The paper select returns once, then get_latest_field_feedback runs its DISTINCT ON per paper.
+	cur = _cursor(mock_conn)
+	cur.fetchall.side_effect = [[('p1', 't1', 'a1')], [('methodology', 5, None), ('findings', 2, 'too vague')]]
+	result = db.similar_feedback_papers(mock_conn, [0.1], limit=3)
+	assert result == [
+		{
+			'paper_id': 'p1',
+			'title': 't1',
+			'abstract': 'a1',
+			'feedback': {
+				'methodology': {'rating': 5, 'correction': None},
+				'findings': {'rating': 2, 'correction': 'too vague'},
+			},
+		}
+	]
+
+
+def test_similar_feedback_papers_returns_empty_when_no_feedback_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.similar_feedback_papers(mock_conn, [0.1], limit=3) == []
+
+
+def test_similar_feedback_papers_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.similar_feedback_papers(mock_conn, [0.1], limit=3)
+
+
+# -- count_ratings / count_summary_feedback --
+
+
+def test_count_ratings_returns_total(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (7,)
+	assert db.count_ratings(mock_conn) == 7
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'SELECT COUNT(*) FROM ratings' in sql
+
+
+def test_count_ratings_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.count_ratings(mock_conn)
+
+
+def test_count_summary_feedback_returns_total(mock_conn):
+	_cursor(mock_conn).fetchone.return_value = (4,)
+	assert db.count_summary_feedback(mock_conn) == 4
+	sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'SELECT COUNT(*) FROM summary_feedback' in sql
+
+
+def test_count_summary_feedback_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('select boom')
+	with pytest.raises(RuntimeError, match='select boom'):
+		db.count_summary_feedback(mock_conn)
+
+
 # -- search_papers --
 
 

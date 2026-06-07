@@ -294,6 +294,75 @@ def get_latest_field_feedback(conn, paper_id):
 	return {field: {'rating': rating, 'correction': correction} for field, rating, correction in rows}
 
 
+# -- few-shot retrieval (pgvector cosine similarity over papers carrying feedback) --
+
+
+_SIMILAR_RATED_PAPERS_SQL = """
+SELECT
+	papers.paper_id,
+	papers.title,
+	papers.abstract,
+	(SELECT rating FROM ratings WHERE paper_id = papers.paper_id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_rating
+FROM papers
+WHERE papers.embedding IS NOT NULL
+	AND EXISTS (SELECT 1 FROM ratings WHERE ratings.paper_id = papers.paper_id)
+	AND papers.paper_id IS DISTINCT FROM %s
+ORDER BY papers.embedding <=> %s::vector
+LIMIT %s
+"""
+
+_SIMILAR_RATED_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract', 'latest_rating')
+
+
+def similar_rated_papers(conn, embedding, limit, exclude_id=None):
+	# Few-shot calibration source: rated papers ranked by cosine distance (<=>) to the query embedding. IS DISTINCT FROM keeps a paper out of its own example set while a NULL exclude_id excludes nothing.
+	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	with conn.cursor() as cur:
+		cur.execute(_SIMILAR_RATED_PAPERS_SQL, (exclude_id, serialised, limit))
+		rows = cur.fetchall()
+	return [dict(zip(_SIMILAR_RATED_PAPERS_COLUMNS, row, strict=True)) for row in rows]
+
+
+_SIMILAR_FEEDBACK_PAPERS_SQL = """
+SELECT
+	papers.paper_id,
+	papers.title,
+	papers.abstract
+FROM papers
+WHERE papers.embedding IS NOT NULL
+	AND EXISTS (SELECT 1 FROM summary_feedback WHERE summary_feedback.paper_id = papers.paper_id)
+	AND papers.paper_id IS DISTINCT FROM %s
+ORDER BY papers.embedding <=> %s::vector
+LIMIT %s
+"""
+
+_SIMILAR_FEEDBACK_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract')
+
+
+def similar_feedback_papers(conn, embedding, limit, exclude_id=None):
+	# Same ranking as similar_rated_papers but gated on summary_feedback; attaches the latest per-field rating+correction so the summariser can pick good (>=4) and bad (<=2) shapes.
+	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	with conn.cursor() as cur:
+		cur.execute(_SIMILAR_FEEDBACK_PAPERS_SQL, (exclude_id, serialised, limit))
+		rows = cur.fetchall()
+	papers = [dict(zip(_SIMILAR_FEEDBACK_PAPERS_COLUMNS, row, strict=True)) for row in rows]
+	for paper in papers:
+		paper['feedback'] = get_latest_field_feedback(conn, paper['paper_id'])
+	return papers
+
+
+def count_ratings(conn):
+	with conn.cursor() as cur:
+		cur.execute('SELECT COUNT(*) FROM ratings')
+		return cur.fetchone()[0]
+
+
+def count_summary_feedback(conn):
+	with conn.cursor() as cur:
+		cur.execute('SELECT COUNT(*) FROM summary_feedback')
+		return cur.fetchone()[0]
+
+
 # -- search and history reads --
 
 
