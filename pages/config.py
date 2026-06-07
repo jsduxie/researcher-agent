@@ -82,15 +82,12 @@ def _form_values(cfg):
 	fewshot_neighbours = _num(
 		fewshot_cols[2], 'fewshot_neighbours_label', cfg.fewshot_neighbours, (1, 20), 'cfg_fewshot_neighbours'
 	)
-	rating_cols = st.columns(3)
+	rating_cols = st.columns(2)
 	fewshot_good_rating = _num(
 		rating_cols[0], 'fewshot_good_rating_label', cfg.fewshot_good_rating, (1, 5), 'cfg_fewshot_good_rating'
 	)
-	fewshot_bad_rating = _num(
-		rating_cols[1], 'fewshot_bad_rating_label', cfg.fewshot_bad_rating, (1, 5), 'cfg_fewshot_bad_rating'
-	)
 	calibration_max_examples = _num(
-		rating_cols[2],
+		rating_cols[1],
 		'calibration_max_examples_label',
 		cfg.calibration_max_examples,
 		(1, 50),
@@ -108,7 +105,6 @@ def _form_values(cfg):
 		'fewshot_min_feedback': fewshot_min_feedback,
 		'fewshot_neighbours': fewshot_neighbours,
 		'fewshot_good_rating': fewshot_good_rating,
-		'fewshot_bad_rating': fewshot_bad_rating,
 		'calibration_max_examples': calibration_max_examples,
 		'gemini_model': model.strip(),
 	}

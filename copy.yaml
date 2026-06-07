@@ -70,7 +70,6 @@ config:
   fewshot_min_feedback_label: 'Few-shot min feedback'
   fewshot_neighbours_label: 'Few-shot neighbours'
   fewshot_good_rating_label: 'Good-shape rating cutoff'
-  fewshot_bad_rating_label: 'Correction rating cutoff'
   calibration_max_examples_label: 'Calibration max examples'
   model_label: 'Gemini model'
   submit: 'Save configuration'

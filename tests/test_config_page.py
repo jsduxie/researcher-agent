@@ -85,7 +85,6 @@ def test_form_prepopulates_context_numbers_and_model(stub_db):
 	assert at.number_input(key='cfg_fewshot_min_feedback').value == _SEED['fewshot_min_feedback']
 	assert at.number_input(key='cfg_fewshot_neighbours').value == _SEED['fewshot_neighbours']
 	assert at.number_input(key='cfg_fewshot_good_rating').value == _SEED['fewshot_good_rating']
-	assert at.number_input(key='cfg_fewshot_bad_rating').value == _SEED['fewshot_bad_rating']
 	assert at.number_input(key='cfg_calibration_max_examples').value == _SEED['calibration_max_examples']
 	assert at.text_input(key='cfg_model').value == _SEED['gemini_model']
 
@@ -105,7 +104,6 @@ def test_form_does_not_expose_infrastructure_keys(stub_db):
 		'cfg_fewshot_min_feedback',
 		'cfg_fewshot_neighbours',
 		'cfg_fewshot_good_rating',
-		'cfg_fewshot_bad_rating',
 		'cfg_calibration_max_examples',
 		'cfg_model',
 	}

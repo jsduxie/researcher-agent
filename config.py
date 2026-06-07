@@ -28,7 +28,6 @@ DIGEST_KEYS = (
 	'fewshot_min_ratings',
 	'fewshot_min_feedback',
 	'fewshot_good_rating',
-	'fewshot_bad_rating',
 	'fewshot_neighbours',
 	'calibration_max_examples',
 )
@@ -51,7 +50,6 @@ class Config:
 	fewshot_min_ratings: int
 	fewshot_min_feedback: int
 	fewshot_good_rating: int
-	fewshot_bad_rating: int
 	fewshot_neighbours: int
 	calibration_max_examples: int
 
@@ -93,4 +91,5 @@ def load(conn):
 		missing = {k: seed[k] for k in missing_keys}
 		db.update_config(conn, missing, by='seed')
 		data.update(missing)
-	return Config(**data)
+	# Filter to known keys so a retired config key left in app_config cannot break loading.
+	return Config(**{k: data[k] for k in DIGEST_KEYS})
