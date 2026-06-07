@@ -246,6 +246,14 @@ def get_paper_embedding(conn, paper_id):
 	return [float(v) for v in row[0].strip('[]').split(',')]
 
 
+def list_papers_missing_embeddings(conn):
+	# Backfill source: papers written before the vector column existed have no embedding yet.
+	with conn.cursor() as cur:
+		cur.execute('SELECT paper_id, title, abstract FROM papers WHERE embedding IS NULL ORDER BY fetched_at')
+		rows = cur.fetchall()
+	return [{'paper_id': paper_id, 'title': title, 'abstract': abstract} for paper_id, title, abstract in rows]
+
+
 # -- review writes (append-only event log; readers select the latest row) --
 
 
