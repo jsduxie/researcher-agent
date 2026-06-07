@@ -8,6 +8,7 @@ import config
 from summariser import (
 	MISSING_FIELD_PLACEHOLDER,
 	SummariserContext,
+	build_fewshot_block,
 	download_pdf,
 	parse_summary_response,
 	summarise_paper,
@@ -45,6 +46,10 @@ def mock_session(mocker):
 	session_cm.__enter__.return_value = conn
 	session_cm.__exit__.return_value = False
 	mocker.patch('summariser.db.session', return_value=session_cm)
+	# Default the few-shot gate off so existing summarise_paper tests keep a byte-identical prompt; the few-shot tests override these.
+	mocker.patch('summariser.db.count_summary_feedback', return_value=0)
+	mocker.patch('summariser.db.get_paper_embedding', return_value=None)
+	mocker.patch('summariser.db.similar_feedback_papers', return_value=[])
 	return {'conn': conn, 'session_cm': session_cm}
 
 
@@ -738,3 +743,109 @@ def test_summarise_paper_propagates_budget_exhausted_from_pdf_path(mocker):
 			on_gemini_call=raising_on_call,
 		)
 	gemini_fn.assert_not_called()
+
+
+# -- few-shot field-feedback injection (layer 1 of the feedback loop) --
+
+
+def _feedback_paper(title='Neighbour', **fields):
+	# Shapes a db.similar_feedback_papers row: per-field {'rating', 'correction'} as get_latest_field_feedback returns.
+	return {'paper_id': 'n1', 'title': title, 'feedback': fields}
+
+
+def test_build_fewshot_block_renders_good_fields_rated_four_or_more():
+	papers = [
+		_feedback_paper(methodology={'rating': 5, 'correction': None}, findings={'rating': 4, 'correction': None})
+	]
+	block = build_fewshot_block(papers)
+	assert 'methodology' in block
+	assert 'findings' in block
+	assert 'happy with' in block
+
+
+def test_build_fewshot_block_renders_bad_fields_with_correction_text():
+	papers = [_feedback_paper(limitations={'rating': 2, 'correction': 'should mention sample size'})]
+	block = build_fewshot_block(papers)
+	assert 'limitations' in block
+	assert 'should mention sample size' in block
+	assert 'corrected' in block
+
+
+def test_build_fewshot_block_excludes_middling_ratings():
+	# Rating 3 is neither a good-shape example (>=4) nor a correction to avoid (<=2).
+	papers = [_feedback_paper(methodology={'rating': 3, 'correction': 'ignored'})]
+	assert build_fewshot_block(papers) == ''
+
+
+def test_build_fewshot_block_skips_low_rated_field_without_correction():
+	# Nothing to inject as a pattern to avoid when the low rating carries no correction text.
+	papers = [_feedback_paper(findings={'rating': 1, 'correction': None})]
+	assert build_fewshot_block(papers) == ''
+
+
+def test_build_fewshot_block_ignores_fields_with_no_rating():
+	papers = [_feedback_paper(methodology={'rating': None, 'correction': 'orphan correction'})]
+	assert build_fewshot_block(papers) == ''
+
+
+def test_build_fewshot_block_empty_when_no_neighbours():
+	assert build_fewshot_block([]) == ''
+
+
+def _mock_fewshot_db(mocker, feedback_count, embedding, neighbours):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.db.upsert_summary')
+	mocker.patch('summariser.db.count_summary_feedback', return_value=feedback_count)
+	mocker.patch('summariser.db.get_paper_embedding', return_value=embedding)
+	return mocker.patch('summariser.db.similar_feedback_papers', return_value=neighbours)
+
+
+def _captured_prompt(gemini_fn):
+	return gemini_fn.call_args.args[0]
+
+
+def test_fewshot_gate_off_below_five_feedback_rows_keeps_prompt_unchanged(mocker):
+	similar = _mock_fewshot_db(mocker, feedback_count=4, embedding=[0.1] * 384, neighbours=[])
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	expected = config.SUMMARISER_PROMPT.format(
+		research_context=_TEST_CFG.research_context, source_material='Abstract:\na'
+	)
+	assert _captured_prompt(gemini_fn) == expected
+	similar.assert_not_called()
+
+
+def test_fewshot_gate_on_at_five_feedback_rows_injects_block(mocker):
+	neighbours = [_feedback_paper(methodology={'rating': 5, 'correction': None})]
+	_mock_fewshot_db(mocker, feedback_count=5, embedding=[0.1] * 384, neighbours=neighbours)
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	prompt = _captured_prompt(gemini_fn)
+	assert 'FEEDBACK FROM SIMILAR PAPERS' in prompt
+	assert 'methodology' in prompt
+
+
+def test_fewshot_skipped_when_paper_has_no_embedding(mocker):
+	similar = _mock_fewshot_db(mocker, feedback_count=10, embedding=None, neighbours=[])
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	expected = config.SUMMARISER_PROMPT.format(
+		research_context=_TEST_CFG.research_context, source_material='Abstract:\na'
+	)
+	assert _captured_prompt(gemini_fn) == expected
+	similar.assert_not_called()
+
+
+def test_fewshot_excludes_the_paper_being_summarised_from_its_own_examples(mocker):
+	similar = _mock_fewshot_db(mocker, feedback_count=5, embedding=[0.1] * 384, neighbours=[])
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x')
+	assert similar.call_args.kwargs['exclude_id'] == 'p1'
+
+
+def test_fewshot_not_built_without_database_url(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	count = mocker.patch('summariser.db.count_summary_feedback')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn)
+	count.assert_not_called()
