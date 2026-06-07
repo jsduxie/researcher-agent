@@ -16,6 +16,8 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Normal runs finish in ~10m; a stalled runner once sat in_progress for 5.5h and would have blocked send-digest (needs: test) on a schedule trigger.
+    timeout-minutes: 30
     # Job-level env so the integration step can gate per-secret. Fork PRs receive '' for missing secrets, which would otherwise fail db.connect('') or live Gemini calls.
     env:
       DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST }}
@@ -105,6 +107,7 @@ jobs:
     needs: test
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
