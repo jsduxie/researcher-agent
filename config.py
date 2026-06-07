@@ -56,6 +56,9 @@ SCORER_PROMPT = _load_prompt('scorer')
 SCORER_CALIBRATION_PROMPT = _load_prompt('scorer_calibration')
 SCORER_CALIBRATION_EXAMPLE = _load_prompt('scorer_calibration_example')
 SUMMARISER_PROMPT = _load_prompt('summariser')
+SUMMARISER_FEWSHOT_PROMPT = _load_prompt('summariser_fewshot')
+SUMMARISER_FEWSHOT_GOOD = _load_prompt('summariser_fewshot_good')
+SUMMARISER_FEWSHOT_BAD = _load_prompt('summariser_fewshot_bad')
 
 _env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)
 _env.globals['S'] = S
