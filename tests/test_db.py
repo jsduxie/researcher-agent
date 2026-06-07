@@ -404,6 +404,27 @@ def test_get_paper_embedding_returns_none_when_not_embedded(mock_conn):
 	assert db.get_paper_embedding(mock_conn, 'p1') is None
 
 
+def test_list_papers_missing_embeddings_selects_null_embedding_rows(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	db.list_papers_missing_embeddings(mock_conn)
+	(sql,) = _cursor(mock_conn).execute.call_args.args
+	assert 'SELECT paper_id, title, abstract FROM papers' in sql
+	assert 'embedding IS NULL' in sql
+
+
+def test_list_papers_missing_embeddings_maps_rows_to_dicts(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = [('p1', 't1', 'a1'), ('p2', 't2', None)]
+	assert db.list_papers_missing_embeddings(mock_conn) == [
+		{'paper_id': 'p1', 'title': 't1', 'abstract': 'a1'},
+		{'paper_id': 'p2', 'title': 't2', 'abstract': None},
+	]
+
+
+def test_list_papers_missing_embeddings_returns_empty_when_none_missing(mock_conn):
+	_cursor(mock_conn).fetchall.return_value = []
+	assert db.list_papers_missing_embeddings(mock_conn) == []
+
+
 # -- mark_scoring_results --
 
 
