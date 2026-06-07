@@ -6,7 +6,14 @@ from dataclasses import dataclass
 import requests
 
 import db
-from config import SUMMARISER_FEWSHOT_BAD, SUMMARISER_FEWSHOT_GOOD, SUMMARISER_FEWSHOT_PROMPT, SUMMARISER_PROMPT, Config
+from config import (
+	SUMMARISER_FEWSHOT_BAD,
+	SUMMARISER_FEWSHOT_GOOD,
+	SUMMARISER_FEWSHOT_GOOD_NOTE,
+	SUMMARISER_FEWSHOT_PROMPT,
+	SUMMARISER_PROMPT,
+	Config,
+)
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_file, upload_pdf_to_gemini
 
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
@@ -90,12 +97,13 @@ def build_fewshot_block(feedback_papers, cfg):
 			rating = entry.get('rating')
 			if rating is None:
 				continue
+			correction = entry.get('correction')
 			if rating >= cfg.fewshot_good_rating:
-				good_lines.append(SUMMARISER_FEWSHOT_GOOD.format(field=field, title=title).strip())
-			elif rating <= cfg.fewshot_bad_rating and entry.get('correction'):
-				bad_lines.append(
-					SUMMARISER_FEWSHOT_BAD.format(field=field, title=title, correction=entry['correction']).strip()
-				)
+				# A correction on a high rating is the "why 4 not 5" nuance; carry it so Gemini learns the small refinement too.
+				template = SUMMARISER_FEWSHOT_GOOD_NOTE if correction else SUMMARISER_FEWSHOT_GOOD
+				good_lines.append(template.format(field=field, title=title, correction=correction).strip())
+			elif rating <= cfg.fewshot_bad_rating and correction:
+				bad_lines.append(SUMMARISER_FEWSHOT_BAD.format(field=field, title=title, correction=correction).strip())
 	if not good_lines and not bad_lines:
 		return ''
 	return SUMMARISER_FEWSHOT_PROMPT.format(good='\n'.join(good_lines), bad='\n'.join(bad_lines))
