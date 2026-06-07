@@ -31,18 +31,19 @@ RETURNING (xmax = 0) AS was_inserted
 """
 
 _UPSERT_SUMMARY_SQL = """
-INSERT INTO summaries (paper_id, methodology, findings, relevance, limitations, model_version, created_at, updated_at)
-VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+INSERT INTO summaries (paper_id, methodology, findings, relevance, limitations, model_version, summary_source, created_at, updated_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
 ON CONFLICT (paper_id) DO UPDATE
 SET methodology = EXCLUDED.methodology,
     findings = EXCLUDED.findings,
     relevance = EXCLUDED.relevance,
     limitations = EXCLUDED.limitations,
     model_version = EXCLUDED.model_version,
+    summary_source = EXCLUDED.summary_source,
     updated_at = NOW()
 """
 
-_SUMMARY_COLUMNS = ('methodology', 'findings', 'relevance', 'limitations', 'model_version')
+_SUMMARY_COLUMNS = ('methodology', 'findings', 'relevance', 'limitations', 'model_version', 'summary_source')
 
 
 def connect(database_url):
@@ -200,7 +201,7 @@ def list_unscored(conn, exclude_ids, max_attempts, limit):
 def get_summary(conn, paper_id):
 	with conn.cursor() as cur:
 		cur.execute(
-			'SELECT methodology, findings, relevance, limitations, model_version FROM summaries WHERE paper_id = %s',
+			'SELECT methodology, findings, relevance, limitations, model_version, summary_source FROM summaries WHERE paper_id = %s',
 			(paper_id,),
 		)
 		row = cur.fetchone()
@@ -210,7 +211,7 @@ def get_summary(conn, paper_id):
 
 
 @database_reconnect
-def upsert_summary(conn, paper_id, fields, model_version):
+def upsert_summary(conn, paper_id, fields, model_version, source=None):
 	with conn.cursor() as cur:
 		cur.execute(
 			_UPSERT_SUMMARY_SQL,
@@ -221,6 +222,7 @@ def upsert_summary(conn, paper_id, fields, model_version):
 				fields.get('relevance'),
 				fields.get('limitations'),
 				model_version,
+				source,
 			),
 		)
 
@@ -396,6 +398,7 @@ _SEARCH_PAPERS_COLUMNS = (
 	'findings',
 	'relevance',
 	'limitations',
+	'summary_source',
 	'latest_rating',
 )
 
@@ -418,6 +421,7 @@ SELECT
 	summaries.findings,
 	summaries.relevance,
 	summaries.limitations,
+	summaries.summary_source,
 	(SELECT rating FROM ratings WHERE paper_id = papers.paper_id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_rating
 FROM papers
 LEFT JOIN summaries ON papers.paper_id = summaries.paper_id
@@ -459,6 +463,7 @@ SELECT
 	summaries.findings,
 	summaries.relevance,
 	summaries.limitations,
+	summaries.summary_source,
 	(SELECT rating FROM ratings WHERE paper_id = papers.paper_id ORDER BY created_at DESC, id DESC LIMIT 1) AS latest_rating,
 	runs_papers.was_new
 FROM papers
