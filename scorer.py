@@ -1,11 +1,41 @@
 import json
 import re
 
-from config import SCORER_PROMPT
+from config import SCORER_CALIBRATION_EXAMPLE, SCORER_CALIBRATION_PROMPT, SCORER_PROMPT
 from gemini import GEMINI_RETRY_STATUS_CODES, GeminiBudgetExhausted, GeminiQuotaExhausted, generate_url, post_with_retry
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
+# Cap the union of per-paper top-3 retrievals so a large batch can't bloat the prompt past the calibration signal a handful of examples already gives.
+_CALIBRATION_MAX_EXAMPLES = 8
+# Abstracts in calibration examples are clipped; the rating and a gist are the signal, the full text would only spend prompt budget.
+_CALIBRATION_ABSTRACT_CHARS = 300
+
+
+def build_calibration_block(papers, retrieve, per_paper=3):
+	# Union the top per_paper most similar rated papers across the batch, dedup by paper_id, cap, and render via the calibration prompt templates. Papers without an embedding are skipped so the --no-prefilter path degrades to no calibration.
+	seen = {}
+	for paper in papers:
+		embedding = paper.get('_embedding')
+		if embedding is None:
+			continue
+		for example in retrieve(embedding, per_paper):
+			paper_id = example.get('paper_id')
+			if paper_id is not None and paper_id not in seen:
+				seen[paper_id] = example
+	examples = list(seen.values())[:_CALIBRATION_MAX_EXAMPLES]
+	if not examples:
+		return ''
+	lines = [
+		# strip() absorbs the trailing newline the end-of-file hook forces on the one-line example template so the joined block stays single-spaced.
+		SCORER_CALIBRATION_EXAMPLE.format(
+			rating=e.get('latest_rating'),
+			title=e.get('title') or '',
+			abstract=(e.get('abstract') or '')[:_CALIBRATION_ABSTRACT_CHARS],
+		).strip()
+		for e in examples
+	]
+	return SCORER_CALIBRATION_PROMPT.format(examples='\n'.join(lines))
 
 
 def gemini(prompt, api_key, cfg, retries=3, on_attempt=None):
@@ -87,18 +117,18 @@ def apply_scores(papers, scores, threshold):
 	return enriched, responded
 
 
-def score_and_summarise(papers, gemini_fn, cfg):
-	# Returns (enriched, responded, attempted) sets of paper ids; attempted only covers batches Gemini actually saw.
+def score_and_summarise(papers, gemini_fn, cfg, calibration_block=''):
+	# Returns (enriched, responded, attempted) sets of paper ids; attempted only covers batches Gemini actually saw. calibration_block prepends few-shot rated examples to every batch prompt; empty keeps the prompt byte-identical to the uncalibrated path.
 	if not papers:
 		return [], set(), set()
 
-	enriched, responded, attempted, halted = _score_batches(papers, gemini_fn, cfg)
+	enriched, responded, attempted, halted = _score_batches(papers, gemini_fn, cfg, calibration_block)
 
 	# Re-batch unanswered papers once at the end; id-less papers are skipped because responded can never contain them.
 	missed = [] if halted else [p for p in papers if p.get('paperId') and p['paperId'] not in responded]
 	if missed:
 		print(f'Rescoring {len(missed)} unresponded paper(s) in a second pass...')
-		more_enriched, more_responded, more_attempted, _ = _score_batches(missed, gemini_fn, cfg)
+		more_enriched, more_responded, more_attempted, _ = _score_batches(missed, gemini_fn, cfg, calibration_block)
 		enriched.extend(more_enriched)
 		responded.update(more_responded)
 		attempted.update(more_attempted)
@@ -106,7 +136,7 @@ def score_and_summarise(papers, gemini_fn, cfg):
 	return enriched, responded, attempted
 
 
-def _score_batches(papers, gemini_fn, cfg):
+def _score_batches(papers, gemini_fn, cfg, calibration_block=''):
 	# halted means quota or budget stopped the run; callers must not send further Gemini work.
 	enriched = []
 	responded = set()
@@ -116,7 +146,7 @@ def _score_batches(papers, gemini_fn, cfg):
 		chunk = papers[chunk_start : chunk_start + batch_size]
 		print(f'Scoring batch {chunk_start // batch_size + 1} ({len(chunk)} papers)...')
 		try:
-			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn, cfg)
+			chunk_enriched, chunk_responded = _score_chunk(chunk, gemini_fn, cfg, calibration_block)
 		except GeminiQuotaExhausted as e:
 			print(f'Quota exhausted, halting remaining batches: {e}')
 			return enriched, responded, attempted, True
@@ -131,7 +161,7 @@ def _score_batches(papers, gemini_fn, cfg):
 	return enriched, responded, attempted, False
 
 
-def _score_chunk(papers, gemini_fn, cfg):
+def _score_chunk(papers, gemini_fn, cfg, calibration_block=''):
 	if not papers:
 		return [], set()
 
@@ -142,7 +172,7 @@ def _score_chunk(papers, gemini_fn, cfg):
 		paper_entries.append(f'[{i}] Title: {title}\nAbstract: {abstract}')
 
 	papers_block = '\n\n'.join(paper_entries)
-	prompt = SCORER_PROMPT.format(research_context=cfg.research_context, papers_block=papers_block)
+	prompt = calibration_block + SCORER_PROMPT.format(research_context=cfg.research_context, papers_block=papers_block)
 
 	try:
 		response = gemini_fn(prompt)

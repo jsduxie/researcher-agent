@@ -172,11 +172,33 @@ def _prefilter_scoring_queue(papers, database_url):
 	for position, idx in enumerate(order[: _CFG.prefilter_top_n], start=1):
 		# Rank rides on the paper so the post-scoring log can report how well the pre-filter predicted the LLM's keeps.
 		papers[idx]['_prefilter_rank'] = position
+		# Vector rides on the paper too so few-shot calibration reuses it rather than re-embedding before scoring.
+		papers[idx]['_embedding'] = vectors[idx]
 		kept.append(papers[idx])
 	print(
 		f'Pre-filter: {len(papers)} candidates considered, {len(kept)} passed to the scorer (top_n={_CFG.prefilter_top_n})'
 	)
 	return kept
+
+
+_CALIBRATION_MIN_RATINGS = 5
+
+
+def _build_scoring_calibration(database_url, papers):
+	# Layer 1 of the feedback loop: inject similar rated papers as scorer calibration, but only once enough ratings exist for the signal to mean anything. Below the gate (or with no DB / no embeddings) the prompt stays byte-identical to the uncalibrated path.
+	if database_url is None or not papers:
+		return ''
+	with db.session(database_url) as conn:
+		if db.count_ratings(conn) < _CALIBRATION_MIN_RATINGS:
+			return ''
+
+		def retrieve(embedding, limit):
+			return db.similar_rated_papers(conn, embedding, limit)
+
+		block = scorer.build_calibration_block(papers, retrieve)
+	if block:
+		print('Few-shot calibration: injected rated examples into the scorer prompt')
+	return block
 
 
 def _bootstrap(argv):
@@ -238,8 +260,10 @@ def main(argv=None):
 	else:
 		new_papers = _prefilter_scoring_queue(new_papers, database_url)
 
+	calibration_block = _build_scoring_calibration(database_url, new_papers)
+
 	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
-	enriched, responded, attempted = scorer.score_and_summarise(new_papers, _gemini_score, _CFG)
+	enriched, responded, attempted = scorer.score_and_summarise(new_papers, _gemini_score, _CFG, calibration_block)
 	enriched.sort(key=lambda p: (p.get('ai_score') or 0, p.get('citationCount') or 0), reverse=True)
 	print(f'{len(enriched)} papers passed the relevance filter (>={_CFG.relevance_threshold}/10).')
 	ranks = [p['_prefilter_rank'] for p in enriched if '_prefilter_rank' in p]

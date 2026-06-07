@@ -7,7 +7,7 @@ import responses
 import config
 import scorer
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_url
-from scorer import _score_chunk, apply_scores, parse_gemini_scores, score_and_summarise
+from scorer import _score_chunk, apply_scores, build_calibration_block, parse_gemini_scores, score_and_summarise
 
 # Tests share the seed-derived cfg; GEMINI_URL and BATCH_SIZE come from it so `responses` mocks match what production builds.
 _TEST_CFG = config.Config(**config.load_seed())
@@ -203,6 +203,95 @@ def test_score_chunk_returns_enriched_papers_on_happy_path(mocker):
 	assert responded == {'p1'}
 
 
+def test_score_chunk_empty_calibration_block_leaves_prompt_byte_identical():
+	captured = {}
+
+	def fake_gemini(prompt):
+		captured['prompt'] = prompt
+		return json.dumps([_valid_score(0, 8)])
+
+	_score_chunk([{'title': 'p', 'abstract': 'a'}], fake_gemini, _TEST_CFG)
+	from config import SCORER_PROMPT
+
+	expected = SCORER_PROMPT.format(
+		research_context=_TEST_CFG.research_context, papers_block='[0] Title: p\nAbstract: a'
+	)
+	assert captured['prompt'] == expected
+
+
+def test_score_chunk_prepends_calibration_block_when_supplied():
+	captured = {}
+
+	def fake_gemini(prompt):
+		captured['prompt'] = prompt
+		return json.dumps([_valid_score(0, 8)])
+
+	_score_chunk([{'title': 'p', 'abstract': 'a'}], fake_gemini, _TEST_CFG, 'CALIB\n\n')
+	assert captured['prompt'].startswith('CALIB\n\n')
+
+
+# -- build_calibration_block --
+
+
+def _retrieve(results_by_paper):
+	# Maps each example paper_id to the rows returned for any query embedding; the block builder dedups across the union.
+	def retrieve(embedding, limit):
+		return results_by_paper.get(embedding, [])
+
+	return retrieve
+
+
+def test_build_calibration_block_renders_examples_with_ratings():
+	papers = [{'_embedding': 'e1'}]
+	rows = [{'paper_id': 'a', 'title': 'Attention', 'abstract': 'transformer', 'latest_rating': 5}]
+	block = build_calibration_block(papers, _retrieve({'e1': rows}))
+	assert 'Rated 5/5: Attention' in block
+	assert 'transformer' in block
+	assert 'CALIBRATION EXAMPLES' in block
+
+
+def test_build_calibration_block_dedups_across_papers_by_paper_id():
+	row = {'paper_id': 'a', 'title': 'T', 'abstract': 'x', 'latest_rating': 4}
+	papers = [{'_embedding': 'e1'}, {'_embedding': 'e2'}]
+	block = build_calibration_block(papers, _retrieve({'e1': [row], 'e2': [row]}))
+	assert block.count('Rated 4/5: T') == 1
+
+
+def test_build_calibration_block_skips_papers_without_embedding():
+	# --no-prefilter path: papers carry no vector, so retrieval never runs and no calibration is built.
+	called = []
+
+	def retrieve(embedding, limit):
+		called.append(embedding)
+		return []
+
+	block = build_calibration_block([{'title': 'p'}], retrieve)
+	assert block == ''
+	assert called == []
+
+
+def test_build_calibration_block_empty_when_no_examples_found():
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': []}))
+	assert block == ''
+
+
+def test_build_calibration_block_caps_total_examples():
+	from scorer import _CALIBRATION_MAX_EXAMPLES
+
+	rows = [{'paper_id': f'p{i}', 'title': f't{i}', 'abstract': 'a', 'latest_rating': 3} for i in range(20)]
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}))
+	assert block.count('Rated 3/5') == _CALIBRATION_MAX_EXAMPLES
+
+
+def test_build_calibration_block_clips_long_abstract():
+	from scorer import _CALIBRATION_ABSTRACT_CHARS
+
+	rows = [{'paper_id': 'a', 'title': 't', 'abstract': 'x' * 1000, 'latest_rating': 5}]
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}))
+	assert 'x' * _CALIBRATION_ABSTRACT_CHARS in block
+	assert 'x' * (_CALIBRATION_ABSTRACT_CHARS + 1) not in block
+
+
 # -- score_and_summarise --
 
 
@@ -222,7 +311,7 @@ def test_score_and_summarise_single_small_batch(mocker):
 
 
 def test_score_and_summarise_multiple_batches(mocker):
-	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg: (c, set()))
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg, block='': (c, set()))
 	gemini_fn = mocker.Mock()
 	papers = [{'i': i} for i in range(BATCH_SIZE * 2 + 3)]
 	enriched, _, _ = score_and_summarise(papers, gemini_fn, _TEST_CFG)
@@ -233,7 +322,7 @@ def test_score_and_summarise_multiple_batches(mocker):
 
 
 def test_score_and_summarise_exact_batch_size(mocker):
-	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg: (c, set()))
+	mock_chunk = mocker.patch('scorer._score_chunk', side_effect=lambda c, fn, cfg, block='': (c, set()))
 	gemini_fn = mocker.Mock()
 	papers = [{'i': i} for i in range(BATCH_SIZE)]
 	score_and_summarise(papers, gemini_fn, _TEST_CFG)
