@@ -200,7 +200,7 @@ def _prefilter_scoring_queue(papers, database_url):
 
 
 def _build_scoring_calibration(database_url, papers, no_fewshot=False):
-	# Layer 1 of the feedback loop: inject similar rated papers as scorer calibration, but only once enough ratings exist for the signal to mean anything. Below the gate (or with no DB / no embeddings / --no-fewshot) the prompt stays byte-identical to the uncalibrated path.
+	# Calibration activates only once enough ratings exist; below the gate the prompt stays byte-identical to the uncalibrated path.
 	if no_fewshot or database_url is None or not papers:
 		return ''
 	with db.session(database_url) as conn:

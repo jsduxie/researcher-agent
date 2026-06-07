@@ -6,12 +6,12 @@ from gemini import GEMINI_RETRY_STATUS_CODES, GeminiBudgetExhausted, GeminiQuota
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _REQUIRED_RESULT_FIELDS = ('relevance_reason',)
-# Abstracts in calibration examples are clipped; the rating and a gist are the signal, the full text would only spend prompt budget.
+# Clipped abstracts keep calibration examples cheap; the rating and a gist are the signal.
 _CALIBRATION_ABSTRACT_CHARS = 300
 
 
 def build_calibration_block(papers, retrieve, cfg):
-	# Union the top fewshot_neighbours most similar rated papers across the batch, dedup by paper_id, cap, and render via the calibration prompt templates. Papers without an embedding are skipped so the --no-prefilter path degrades to no calibration.
+	# Papers without an embedding are skipped so the --no-prefilter path degrades to no calibration.
 	seen = {}
 	for paper in papers:
 		embedding = paper.get('_embedding')
@@ -25,7 +25,7 @@ def build_calibration_block(papers, retrieve, cfg):
 	if not examples:
 		return ''
 	lines = [
-		# strip() absorbs the trailing newline the end-of-file hook forces on the one-line example template so the joined block stays single-spaced.
+		# strip() absorbs the trailing newline the end-of-file hook forces on the template.
 		SCORER_CALIBRATION_EXAMPLE.format(
 			rating=e.get('latest_rating'),
 			title=e.get('title') or '',
@@ -116,7 +116,7 @@ def apply_scores(papers, scores, threshold):
 
 
 def score_and_summarise(papers, gemini_fn, cfg, calibration_block=''):
-	# Returns (enriched, responded, attempted) sets of paper ids; attempted only covers batches Gemini actually saw. calibration_block prepends few-shot rated examples to every batch prompt; empty keeps the prompt byte-identical to the uncalibrated path.
+	# Returns (enriched, responded, attempted); attempted only covers batches Gemini saw. An empty calibration_block keeps the prompt byte-identical.
 	if not papers:
 		return [], set(), set()
 

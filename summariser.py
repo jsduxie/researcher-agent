@@ -64,7 +64,7 @@ def summarise_paper(paper, gemini_fn, ctx):
 
 
 def _build_fewshot_block(paper_id, ctx):
-	# Gate, embedding load and neighbour retrieval all happen in one short session; returns '' (prompt stays byte-identical) below the gate, with no DB, or when this paper has no embedding to rank by.
+	# Returns '' below the gate, with no DB, or when the paper has no embedding, keeping the prompt byte-identical.
 	if not ctx.fewshot_enabled or not ctx.database_url or not paper_id:
 		return ''
 	with db.session(ctx.database_url) as conn:
@@ -81,7 +81,7 @@ def _build_fewshot_block(paper_id, ctx):
 
 
 def build_fewshot_block(feedback_papers, cfg):
-	# Render the latest per-field feedback of similar reviewed papers: fields rated at/above the good cutoff become good-shape examples, fields at/below the bad cutoff become corrections to avoid. Empty when neither bucket has anything.
+	# Fields at or above the good cutoff become shape examples, those at or below the bad cutoff become corrections to avoid.
 	good_lines = []
 	bad_lines = []
 	for paper in feedback_papers:
