@@ -1,0 +1,1 @@
+- Rated {rating}/5: {title} | {abstract}

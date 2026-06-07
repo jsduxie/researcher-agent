@@ -53,6 +53,8 @@ with open(_TEMPLATES_DIR / 'style.yaml') as _f:
 	S = yaml.safe_load(_f)
 
 SCORER_PROMPT = _load_prompt('scorer')
+SCORER_CALIBRATION_PROMPT = _load_prompt('scorer_calibration')
+SCORER_CALIBRATION_EXAMPLE = _load_prompt('scorer_calibration_example')
 SUMMARISER_PROMPT = _load_prompt('summariser')
 
 _env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)

@@ -39,6 +39,9 @@ def mock_db(mocker):
 		'needs_scoring': mocker.patch('main.db.needs_scoring', side_effect=lambda conn, ids: set(ids)),
 		'list_unscored': mocker.patch('main.db.list_unscored', return_value=[]),
 		'set_paper_embedding': mocker.patch('main.db.set_paper_embedding'),
+		# Default: too few ratings, so the calibration gate stays off and the scorer prompt is uncalibrated.
+		'count_ratings': mocker.patch('main.db.count_ratings', return_value=0),
+		'similar_rated_papers': mocker.patch('main.db.similar_rated_papers', return_value=[]),
 		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
 	}
@@ -252,7 +255,7 @@ def test_live_run_prefilter_logs_considered_vs_passed(mock_db, mock_io, mocker, 
 
 def test_live_run_logs_average_prefilter_rank_of_kept_papers(mock_db, mock_io, capsys):
 	# The scorer returns the same dict objects it was given, so the rank attached by the pre-filter survives.
-	mock_io['score'].side_effect = lambda papers, fn, cfg: (papers, {'p1'}, {'p1'})
+	mock_io['score'].side_effect = lambda papers, fn, cfg, block='': (papers, {'p1'}, {'p1'})
 	main.main([])
 	assert 'Average pre-filter rank of threshold-passing papers: 1.0' in capsys.readouterr().out
 
@@ -265,6 +268,44 @@ def test_no_prefilter_flag_scores_full_queue_without_embedding(mock_db, mock_io,
 	mock_db['set_paper_embedding'].assert_not_called()
 	assert len(mock_io['score'].call_args.args[0]) == 3
 	assert 'Pre-filter disabled' in capsys.readouterr().out
+
+
+# -- few-shot scoring calibration (layer 1 of the feedback loop) --
+
+
+def test_calibration_gate_off_below_five_ratings_keeps_block_empty(mock_db, mock_io):
+	mock_db['count_ratings'].return_value = 4
+	main.main([])
+	assert mock_io['score'].call_args.args[3] == ''
+	mock_db['similar_rated_papers'].assert_not_called()
+
+
+def test_calibration_gate_on_at_five_ratings_injects_examples(mock_db, mock_io):
+	mock_db['count_ratings'].return_value = 5
+	mock_db['similar_rated_papers'].return_value = [
+		{'paper_id': 'r1', 'title': 'Rated paper', 'abstract': 'about transformers', 'latest_rating': 5}
+	]
+	main.main([])
+	block = mock_io['score'].call_args.args[3]
+	assert 'Rated 5/5: Rated paper' in block
+	mock_db['similar_rated_papers'].assert_called()
+
+
+def test_calibration_logs_when_block_injected(mock_db, mock_io, capsys):
+	mock_db['count_ratings'].return_value = 5
+	mock_db['similar_rated_papers'].return_value = [
+		{'paper_id': 'r1', 'title': 'T', 'abstract': 'a', 'latest_rating': 5}
+	]
+	main.main([])
+	assert 'Few-shot calibration: injected rated examples' in capsys.readouterr().out
+
+
+def test_calibration_skipped_on_no_prefilter_path_without_embeddings(mock_db, mock_io):
+	# Gate is on, but --no-prefilter never embeds the queue, so no paper carries a vector and retrieval never runs.
+	mock_db['count_ratings'].return_value = 5
+	main.main(['--no-prefilter'])
+	assert mock_io['score'].call_args.args[3] == ''
+	mock_db['similar_rated_papers'].assert_not_called()
 
 
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
@@ -628,9 +669,9 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Phase D sessions are owned by summariser.summarise_paper (mocked here); main opens config-load + A (upserts) + B (embedding store) + C (mark) + E (finish) = 5.
+	# Phase D sessions are owned by summariser.summarise_paper (mocked here); main opens config-load + A (upserts) + B (embedding store) + calibration gate + C (mark) + E (finish) = 6.
 	main.main([])
-	assert mock_db['session'].call_count == 5
+	assert mock_db['session'].call_count == 6
 
 
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
@@ -674,7 +715,7 @@ def test_no_db_session_is_open_during_scoring(mock_db, mock_io):
 
 
 def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
-	# Config-load, Phase A and the embedding store succeed; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
+	# Config-load, Phase A, the embedding store and the calibration gate succeed; the next session open (Phase C) fails. Verifies the pipeline completes the phases it can and surfaces the failure cleanly.
 	from contextlib import contextmanager
 
 	import psycopg
@@ -684,7 +725,7 @@ def test_main_propagates_when_a_later_phase_session_fails(mock_db, mock_io):
 	@contextmanager
 	def maybe_failing(url):
 		call_count[0] += 1
-		if call_count[0] <= 3:
+		if call_count[0] <= 4:
 			yield mock_db['conn']
 		else:
 			raise psycopg.OperationalError('reaped')
@@ -795,7 +836,7 @@ def test_summarise_kept_papers_breaks_when_budget_already_reached(mock_db, mock_
 	# Three enriched papers, budget=1 already consumed by scoring; first summarise attempt detects via on_gemini_call and raises before any Gemini work.
 	mock_db['config_load'].return_value = replace(_TEST_CFG, gemini_call_budget=1)
 
-	def consume_then_score(papers, gemini_fn, cfg):
+	def consume_then_score(papers, gemini_fn, cfg, calibration_block=''):
 		main.GEMINI_CALL_COUNT = 1
 		return (
 			[{'paperId': 'a', 'ai_score': 8}, {'paperId': 'b', 'ai_score': 7}, {'paperId': 'c', 'ai_score': 6}],
