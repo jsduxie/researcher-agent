@@ -100,6 +100,10 @@ def _render_run_papers(papers):
 		if paper.get('year'):
 			meta_parts.append(str(paper['year']))
 		meta_parts.append(_format_rating(paper.get('latest_rating')))
+		# Flags abstract-only summaries so weaker entries are visible at a glance.
+		source = paper.get('summary_source')
+		if source:
+			meta_parts.append(COPY['history']['source_pdf'] if source == 'pdf' else COPY['history']['source_abstract'])
 		sep = f' {COPY["icons"]["meta_separator"]} '
 		st.markdown(f'<div class="history-paper-meta">{sep.join(meta_parts)}</div>', unsafe_allow_html=True)
 

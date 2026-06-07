@@ -55,6 +55,8 @@ history:
   in_progress: 'in progress'
   tag_new: 'new'
   tag_repeat: 'repeat'
+  source_pdf: 'full PDF'
+  source_abstract: 'abstract only'
   scorer_prompt_label: 'Scorer prompt'
   summariser_prompt_label: 'Summariser prompt'
 
