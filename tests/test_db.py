@@ -500,10 +500,13 @@ def test_mark_scoring_results_propagates_database_error(mock_conn):
 
 
 def test_get_summary_returns_dict_when_row_present(mock_conn):
-	_cursor(mock_conn).fetchone.return_value = ('m', 'f', 'r', 'l', 'test-model-v1')
+	_cursor(mock_conn).fetchone.return_value = ('m', 'f', 'r', 'l', 'test-model-v1', 'pdf')
 	result = db.get_summary(mock_conn, 'abc')
 	call = _cursor(mock_conn).execute.call_args
-	assert 'SELECT methodology, findings, relevance, limitations, model_version FROM summaries' in call.args[0]
+	assert (
+		'SELECT methodology, findings, relevance, limitations, model_version, summary_source FROM summaries'
+		in call.args[0]
+	)
 	assert 'paper_id = %s' in call.args[0]
 	assert call.args[1] == ('abc',)
 	assert result == {
@@ -512,6 +515,7 @@ def test_get_summary_returns_dict_when_row_present(mock_conn):
 		'relevance': 'r',
 		'limitations': 'l',
 		'model_version': 'test-model-v1',
+		'summary_source': 'pdf',
 	}
 
 
@@ -548,22 +552,22 @@ def test_upsert_summary_preserves_created_at_on_conflict(mock_conn):
 
 def test_upsert_summary_binds_all_fields_in_order(mock_conn):
 	fields = {'methodology': 'm', 'findings': 'f', 'relevance': 'r', 'limitations': 'l'}
-	db.upsert_summary(mock_conn, 'abc', fields, 'test-model-v1')
+	db.upsert_summary(mock_conn, 'abc', fields, 'test-model-v1', 'pdf')
 	params = _cursor(mock_conn).execute.call_args.args[1]
-	assert params == ('abc', 'm', 'f', 'r', 'l', 'test-model-v1')
+	assert params == ('abc', 'm', 'f', 'r', 'l', 'test-model-v1', 'pdf')
 
 
 def test_upsert_summary_binds_none_for_missing_field_keys(mock_conn):
 	# A field absent from the dict should bind NULL. Callers using a placeholder ('Not available') always provide the key; this guards a partial Gemini response.
 	db.upsert_summary(mock_conn, 'abc', {'methodology': 'm'}, 'test-model-v1')
 	params = _cursor(mock_conn).execute.call_args.args[1]
-	assert params == ('abc', 'm', None, None, None, 'test-model-v1')
+	assert params == ('abc', 'm', None, None, None, 'test-model-v1', None)
 
 
 def test_upsert_summary_accepts_none_model_version(mock_conn):
 	db.upsert_summary(mock_conn, 'abc', {}, None)
 	params = _cursor(mock_conn).execute.call_args.args[1]
-	assert params == ('abc', None, None, None, None, None)
+	assert params == ('abc', None, None, None, None, None, None)
 
 
 def test_upsert_summary_propagates_database_error(mock_conn):
@@ -1026,6 +1030,7 @@ def test_search_papers_returns_list_of_dicts_with_expected_columns(mock_conn):
 			'f',
 			'r',
 			'l',
+			'pdf',
 			4,
 		)
 	]
@@ -1046,6 +1051,7 @@ def test_search_papers_returns_list_of_dicts_with_expected_columns(mock_conn):
 			'findings': 'f',
 			'relevance': 'r',
 			'limitations': 'l',
+			'summary_source': 'pdf',
 			'latest_rating': 4,
 		}
 	]
@@ -1167,6 +1173,7 @@ def test_list_papers_for_run_returns_list_of_dicts_with_expected_columns(mock_co
 			'findings text',
 			'relevance text',
 			'limitations text',
+			'pdf',
 			4,
 			True,
 		)

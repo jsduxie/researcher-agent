@@ -58,19 +58,24 @@ def summarise_paper(paper, gemini_fn, ctx):
 	fewshot_block = _build_fewshot_block(paper_id, ctx)
 
 	fields = None
+	source = None
 	pdf_url = (paper.get('openAccessPdf') or {}).get('url')
 	if pdf_url and ctx.api_key:
 		fields = _summarise_via_pdf(title, pdf_url, ctx, fewshot_block)
+		if fields is not None:
+			source = 'pdf'
 
 	if fields is None:
 		fields = _summarise_via_abstract(paper, gemini_fn, ctx, fewshot_block)
+		if fields is not None:
+			source = 'abstract'
 
 	if fields is None:
 		return None
 
 	if ctx.database_url and paper_id:
 		with db.session(ctx.database_url) as conn:
-			db.upsert_summary(conn, paper_id, fields, ctx.cfg.gemini_model)
+			db.upsert_summary(conn, paper_id, fields, ctx.cfg.gemini_model, source)
 
 	return fields
 

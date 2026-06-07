@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS summaries (
 
 -- Idempotent migration for databases created before updated_at existed.
 ALTER TABLE summaries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+-- Records whether a summary was built from the full PDF or fell back to the abstract.
+ALTER TABLE summaries ADD COLUMN IF NOT EXISTS summary_source TEXT;
 
 CREATE TABLE IF NOT EXISTS runs (
 	id BIGSERIAL PRIMARY KEY,

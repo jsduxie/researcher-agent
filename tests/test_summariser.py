@@ -197,6 +197,27 @@ def test_summarise_paper_persists_fresh_summary(mocker, mock_session):
 	assert call.args[1] == 'p1'
 	assert call.args[2] == {'methodology': 'method', 'findings': 'find', 'relevance': 'rel', 'limitations': 'lim'}
 	assert call.args[3] == MODEL_VERSION
+	assert call.args[4] == 'abstract'
+
+
+def test_summarise_paper_records_pdf_source_when_pdf_path_succeeds(mocker, mock_session):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	mocker.patch('summariser.download_pdf', return_value=b'%PDF-1.4')
+	mocker.patch('summariser.upload_pdf_to_gemini', return_value='files/abc')
+	mocker.patch('summariser.generate_with_file', return_value=_valid_response())
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock()
+
+	_summarise(
+		{'paperId': 'p1', 'abstract': 'a', 'openAccessPdf': {'url': PDF_URL}},
+		gemini_fn,
+		database_url='postgresql://x',
+		api_key='fake-key',
+	)
+
+	upsert.assert_called_once()
+	assert upsert.call_args.args[4] == 'pdf'
+	gemini_fn.assert_not_called()
 
 
 def test_summarise_paper_does_not_persist_when_conn_is_none(mocker):
@@ -709,7 +730,7 @@ def test_summarise_paper_propagates_quota_exhausted_from_abstract_path(mocker):
 def test_summarise_paper_propagates_quota_exhausted_from_pdf_path(mocker):
 	import gemini
 
-	responses.get(PDF_URL, body=b'pdf')
+	responses.get(PDF_URL, body=b'%PDF-1.4 pdf')
 	responses.post(GEMINI_FILES_UPLOAD_URL, json={}, headers={'X-Goog-Upload-URL': UPLOAD_TARGET})
 	responses.post(UPLOAD_TARGET, json={'file': {'uri': 'files/abc'}})
 	responses.post(GEMINI_GENERATE_URL, json=_PER_DAY_429, status=429)
