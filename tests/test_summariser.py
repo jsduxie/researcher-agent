@@ -757,7 +757,7 @@ def test_build_fewshot_block_renders_good_fields_rated_four_or_more():
 	papers = [
 		_feedback_paper(methodology={'rating': 5, 'correction': None}, findings={'rating': 4, 'correction': None})
 	]
-	block = build_fewshot_block(papers)
+	block = build_fewshot_block(papers, _TEST_CFG)
 	assert 'methodology' in block
 	assert 'findings' in block
 	assert 'happy with' in block
@@ -765,7 +765,7 @@ def test_build_fewshot_block_renders_good_fields_rated_four_or_more():
 
 def test_build_fewshot_block_renders_bad_fields_with_correction_text():
 	papers = [_feedback_paper(limitations={'rating': 2, 'correction': 'should mention sample size'})]
-	block = build_fewshot_block(papers)
+	block = build_fewshot_block(papers, _TEST_CFG)
 	assert 'limitations' in block
 	assert 'should mention sample size' in block
 	assert 'corrected' in block
@@ -774,22 +774,22 @@ def test_build_fewshot_block_renders_bad_fields_with_correction_text():
 def test_build_fewshot_block_excludes_middling_ratings():
 	# Rating 3 is neither a good-shape example (>=4) nor a correction to avoid (<=2).
 	papers = [_feedback_paper(methodology={'rating': 3, 'correction': 'ignored'})]
-	assert build_fewshot_block(papers) == ''
+	assert build_fewshot_block(papers, _TEST_CFG) == ''
 
 
 def test_build_fewshot_block_skips_low_rated_field_without_correction():
 	# Nothing to inject as a pattern to avoid when the low rating carries no correction text.
 	papers = [_feedback_paper(findings={'rating': 1, 'correction': None})]
-	assert build_fewshot_block(papers) == ''
+	assert build_fewshot_block(papers, _TEST_CFG) == ''
 
 
 def test_build_fewshot_block_ignores_fields_with_no_rating():
 	papers = [_feedback_paper(methodology={'rating': None, 'correction': 'orphan correction'})]
-	assert build_fewshot_block(papers) == ''
+	assert build_fewshot_block(papers, _TEST_CFG) == ''
 
 
 def test_build_fewshot_block_empty_when_no_neighbours():
-	assert build_fewshot_block([]) == ''
+	assert build_fewshot_block([], _TEST_CFG) == ''
 
 
 def _mock_fewshot_db(mocker, feedback_count, embedding, neighbours):

@@ -18,3 +18,9 @@ gemini_upload_base_url: https://generativelanguage.googleapis.com/upload/v1beta
 gemini_call_budget: 400
 pdf_max_size_mb: 50
 prefilter_top_n: 30
+fewshot_min_ratings: 5
+fewshot_min_feedback: 5
+fewshot_good_rating: 4
+fewshot_bad_rating: 2
+fewshot_neighbours: 3
+calibration_max_examples: 8

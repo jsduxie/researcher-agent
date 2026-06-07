@@ -19,7 +19,7 @@ _COPY_PATH = _ROOT / 'copy.yaml'
 with open(_COPY_PATH) as _f:
 	COPY = yaml.safe_load(_f)
 
-# The form exposes only the keys an operator should tune; infrastructure values (URLs, batch size, budget, PDF cap) stay seed/DB-managed.
+# The form exposes the keys an operator should tune, including the few-shot knobs; infrastructure values like URLs, batch size, budget and the PDF cap stay seed/DB-managed.
 HISTORY_LIMIT = 20
 _VALUE_PREVIEW_CHARS = 80
 _CHANGED_BY = 'dashboard'
@@ -82,6 +82,50 @@ def _form_values(cfg):
 		value=cfg.prefilter_top_n,
 		key='cfg_prefilter_top_n',
 	)
+	fewshot_cols = st.columns(3)
+	fewshot_min_ratings = fewshot_cols[0].number_input(
+		COPY['config']['fewshot_min_ratings_label'],
+		min_value=1,
+		max_value=100,
+		value=cfg.fewshot_min_ratings,
+		key='cfg_fewshot_min_ratings',
+	)
+	fewshot_min_feedback = fewshot_cols[1].number_input(
+		COPY['config']['fewshot_min_feedback_label'],
+		min_value=1,
+		max_value=100,
+		value=cfg.fewshot_min_feedback,
+		key='cfg_fewshot_min_feedback',
+	)
+	fewshot_neighbours = fewshot_cols[2].number_input(
+		COPY['config']['fewshot_neighbours_label'],
+		min_value=1,
+		max_value=20,
+		value=cfg.fewshot_neighbours,
+		key='cfg_fewshot_neighbours',
+	)
+	rating_cols = st.columns(3)
+	fewshot_good_rating = rating_cols[0].number_input(
+		COPY['config']['fewshot_good_rating_label'],
+		min_value=1,
+		max_value=5,
+		value=cfg.fewshot_good_rating,
+		key='cfg_fewshot_good_rating',
+	)
+	fewshot_bad_rating = rating_cols[1].number_input(
+		COPY['config']['fewshot_bad_rating_label'],
+		min_value=1,
+		max_value=5,
+		value=cfg.fewshot_bad_rating,
+		key='cfg_fewshot_bad_rating',
+	)
+	calibration_max_examples = rating_cols[2].number_input(
+		COPY['config']['calibration_max_examples_label'],
+		min_value=1,
+		max_value=50,
+		value=cfg.calibration_max_examples,
+		key='cfg_calibration_max_examples',
+	)
 	model = st.text_input(COPY['config']['model_label'], value=cfg.gemini_model, key='cfg_model')
 	return {
 		'search_queries': [q.strip() for q in queries_text.splitlines() if q.strip()],
@@ -90,6 +134,12 @@ def _form_values(cfg):
 		'days_back': days_back,
 		'max_per_query': max_per_query,
 		'prefilter_top_n': prefilter_top_n,
+		'fewshot_min_ratings': fewshot_min_ratings,
+		'fewshot_min_feedback': fewshot_min_feedback,
+		'fewshot_neighbours': fewshot_neighbours,
+		'fewshot_good_rating': fewshot_good_rating,
+		'fewshot_bad_rating': fewshot_bad_rating,
+		'calibration_max_examples': calibration_max_examples,
 		'gemini_model': model.strip(),
 	}
 

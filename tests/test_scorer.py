@@ -271,7 +271,7 @@ def _retrieve(results_by_paper):
 def test_build_calibration_block_renders_examples_with_ratings():
 	papers = [{'_embedding': 'e1'}]
 	rows = [{'paper_id': 'a', 'title': 'Attention', 'abstract': 'transformer', 'latest_rating': 5}]
-	block = build_calibration_block(papers, _retrieve({'e1': rows}))
+	block = build_calibration_block(papers, _retrieve({'e1': rows}), _TEST_CFG)
 	assert 'Rated 5/5: Attention' in block
 	assert 'transformer' in block
 	assert 'CALIBRATION EXAMPLES' in block
@@ -280,7 +280,7 @@ def test_build_calibration_block_renders_examples_with_ratings():
 def test_build_calibration_block_dedups_across_papers_by_paper_id():
 	row = {'paper_id': 'a', 'title': 'T', 'abstract': 'x', 'latest_rating': 4}
 	papers = [{'_embedding': 'e1'}, {'_embedding': 'e2'}]
-	block = build_calibration_block(papers, _retrieve({'e1': [row], 'e2': [row]}))
+	block = build_calibration_block(papers, _retrieve({'e1': [row], 'e2': [row]}), _TEST_CFG)
 	assert block.count('Rated 4/5: T') == 1
 
 
@@ -292,29 +292,38 @@ def test_build_calibration_block_skips_papers_without_embedding():
 		called.append(embedding)
 		return []
 
-	block = build_calibration_block([{'title': 'p'}], retrieve)
+	block = build_calibration_block([{'title': 'p'}], retrieve, _TEST_CFG)
 	assert block == ''
 	assert called == []
 
 
 def test_build_calibration_block_empty_when_no_examples_found():
-	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': []}))
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': []}), _TEST_CFG)
 	assert block == ''
 
 
 def test_build_calibration_block_caps_total_examples():
-	from scorer import _CALIBRATION_MAX_EXAMPLES
-
 	rows = [{'paper_id': f'p{i}', 'title': f't{i}', 'abstract': 'a', 'latest_rating': 3} for i in range(20)]
-	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}))
-	assert block.count('Rated 3/5') == _CALIBRATION_MAX_EXAMPLES
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}), _TEST_CFG)
+	assert block.count('Rated 3/5') == _TEST_CFG.calibration_max_examples
+
+
+def test_build_calibration_block_retrieves_fewshot_neighbours_per_paper():
+	limits = []
+
+	def retrieve(embedding, limit):
+		limits.append(limit)
+		return []
+
+	build_calibration_block([{'_embedding': 'e1'}], retrieve, _TEST_CFG)
+	assert limits == [_TEST_CFG.fewshot_neighbours]
 
 
 def test_build_calibration_block_clips_long_abstract():
 	from scorer import _CALIBRATION_ABSTRACT_CHARS
 
 	rows = [{'paper_id': 'a', 'title': 't', 'abstract': 'x' * 1000, 'latest_rating': 5}]
-	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}))
+	block = build_calibration_block([{'_embedding': 'e1'}], _retrieve({'e1': rows}), _TEST_CFG)
 	assert 'x' * _CALIBRATION_ABSTRACT_CHARS in block
 	assert 'x' * (_CALIBRATION_ABSTRACT_CHARS + 1) not in block
 
