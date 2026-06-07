@@ -80,7 +80,6 @@ def test_pdf_max_size_mb_is_positive_int():
 		'fewshot_min_ratings',
 		'fewshot_min_feedback',
 		'fewshot_good_rating',
-		'fewshot_bad_rating',
 		'fewshot_neighbours',
 		'calibration_max_examples',
 	],
@@ -113,11 +112,11 @@ def test_load_seeds_empty_table_then_returns_seed_values(mocker):
 	update.assert_called_once_with(conn, _SEED, by='seed')
 
 
-def test_load_raises_on_unexpected_db_key(mocker):
-	# A rogue key in app_config means the table and Config have drifted; fail the run loudly rather than silently dropping the value.
-	mocker.patch('config.db.load_config', return_value={**_SEED, 'rogue_key': 1})
-	with pytest.raises(TypeError):
-		config.load(mocker.Mock())
+def test_load_ignores_unknown_db_key(mocker):
+	# A retired key left in app_config must not break loading; load filters to the known DIGEST_KEYS.
+	mocker.patch('config.db.load_config', return_value={**_SEED, 'fewshot_bad_rating': 2})
+	mocker.patch('config.db.update_config')
+	assert config.load(mocker.Mock()) == _CFG
 
 
 def test_load_backfills_missing_keys_from_seed(mocker):

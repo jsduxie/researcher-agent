@@ -21,6 +21,5 @@ prefilter_top_n: 30
 fewshot_min_ratings: 5
 fewshot_min_feedback: 5
 fewshot_good_rating: 4
-fewshot_bad_rating: 2
 fewshot_neighbours: 3
 calibration_max_examples: 8
