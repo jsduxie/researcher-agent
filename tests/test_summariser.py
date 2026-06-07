@@ -849,3 +849,23 @@ def test_fewshot_not_built_without_database_url(mocker):
 	gemini_fn = mocker.Mock(return_value=_valid_response())
 	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn)
 	count.assert_not_called()
+
+
+def test_on_prompt_fires_with_the_rendered_prompt(mocker):
+	captured = []
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, on_prompt=captured.append)
+	assert captured == [_captured_prompt(gemini_fn)]
+
+
+def test_fewshot_disabled_keeps_prompt_plain_even_when_gate_would_pass(mocker):
+	# --no-fewshot path: gate met (5 feedback rows + embedding + neighbours) but fewshot_enabled=False must still produce a byte-identical prompt.
+	neighbours = [_feedback_paper(methodology={'rating': 5, 'correction': None})]
+	similar = _mock_fewshot_db(mocker, feedback_count=5, embedding=[0.1] * 384, neighbours=neighbours)
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+	_summarise({'paperId': 'p1', 'abstract': 'a'}, gemini_fn, database_url='postgresql://x', fewshot_enabled=False)
+	expected = config.SUMMARISER_PROMPT.format(
+		research_context=_TEST_CFG.research_context, source_material='Abstract:\na'
+	)
+	assert _captured_prompt(gemini_fn) == expected
+	similar.assert_not_called()

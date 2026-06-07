@@ -7,7 +7,14 @@ import responses
 import config
 import scorer
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_url
-from scorer import _score_chunk, apply_scores, build_calibration_block, parse_gemini_scores, score_and_summarise
+from scorer import (
+	_score_chunk,
+	apply_scores,
+	build_calibration_block,
+	parse_gemini_scores,
+	render_scorer_prompt,
+	score_and_summarise,
+)
 
 # Tests share the seed-derived cfg; GEMINI_URL and BATCH_SIZE come from it so `responses` mocks match what production builds.
 _TEST_CFG = config.Config(**config.load_seed())
@@ -228,6 +235,26 @@ def test_score_chunk_prepends_calibration_block_when_supplied():
 
 	_score_chunk([{'title': 'p', 'abstract': 'a'}], fake_gemini, _TEST_CFG, 'CALIB\n\n')
 	assert captured['prompt'].startswith('CALIB\n\n')
+
+
+# -- render_scorer_prompt --
+
+
+def test_render_scorer_prompt_matches_what_score_chunk_sends():
+	captured = {}
+
+	def fake_gemini(prompt):
+		captured['prompt'] = prompt
+		return json.dumps([_valid_score(0, 8)])
+
+	papers = [{'title': 'p', 'abstract': 'a'}]
+	_score_chunk(papers, fake_gemini, _TEST_CFG, 'CALIB\n\n')
+	assert render_scorer_prompt(papers, _TEST_CFG, 'CALIB\n\n') == captured['prompt']
+
+
+def test_render_scorer_prompt_prepends_calibration_block():
+	prompt = render_scorer_prompt([{'title': 'p', 'abstract': 'a'}], _TEST_CFG, 'CALIB\n\n')
+	assert prompt.startswith('CALIB\n\n')
 
 
 # -- build_calibration_block --

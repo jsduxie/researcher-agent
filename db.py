@@ -137,6 +137,16 @@ def finish_run(conn, run_id, papers_kept, queries_attempted, queries_errored):
 		)
 
 
+@database_reconnect
+def record_run_prompts(conn, run_id, scorer_prompt, summariser_prompt):
+	# Either prompt may be None when a run skips that stage (e.g. nothing to score or summarise); the columns are nullable so the History page can show 'not logged'.
+	with conn.cursor() as cur:
+		cur.execute(
+			'UPDATE runs SET scorer_prompt = %s, summariser_prompt = %s WHERE id = %s',
+			(scorer_prompt, summariser_prompt, run_id),
+		)
+
+
 def needs_scoring(conn, paper_ids):
 	if not paper_ids:
 		return set()

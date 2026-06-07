@@ -84,11 +84,23 @@ def _record_gemini_call():
 	GEMINI_CALL_COUNT += 1
 
 
-def _summarise_kept_papers(enriched, database_url):
+def _summarise_kept_papers(enriched, database_url, no_fewshot=False):
 	# summariser.summarise_paper manages two short DB sessions (cache check, then persist); no DB open during the Gemini work in between.
 	api_key = None if DRY_RUN else os.environ.get('GEMINI_API_KEY')
+	# One representative rendered summariser prompt is logged for inspection; the first one summarise_paper renders is captured here.
+	captured = []
+
+	def capture_prompt(prompt):
+		if not captured:
+			captured.append(prompt)
+
 	ctx = summariser.SummariserContext(
-		cfg=_CFG, database_url=database_url, api_key=api_key, on_gemini_call=_record_gemini_call
+		cfg=_CFG,
+		database_url=database_url,
+		api_key=api_key,
+		on_gemini_call=_record_gemini_call,
+		on_prompt=capture_prompt,
+		fewshot_enabled=not no_fewshot,
 	)
 	skipped = 0
 	for i, paper in enumerate(enriched):
@@ -108,6 +120,7 @@ def _summarise_kept_papers(enriched, database_url):
 		print(
 			f'Gemini budget ({GEMINI_CALL_BUDGET}) reached; {skipped} paper(s) will be emailed without full summaries'
 		)
+	return captured[0] if captured else None
 
 
 def _report_gemini_usage():
@@ -150,6 +163,11 @@ def _record_scoring_attempts(database_url, attempted, responded):
 	print(f'Recorded scoring attempts: attempted={len(attempted)}, responded={len(responded)}')
 
 
+def _record_run_prompts(database_url, run_id, scorer_prompt, summariser_prompt):
+	with db.session(database_url) as conn:
+		db.record_run_prompts(conn, run_id, scorer_prompt, summariser_prompt)
+
+
 def _finalise_run(database_url, run_id, papers_kept, queries_attempted, queries_errored):
 	with db.session(database_url) as conn:
 		db.finish_run(conn, run_id, papers_kept, queries_attempted, queries_errored)
@@ -184,9 +202,9 @@ def _prefilter_scoring_queue(papers, database_url):
 _CALIBRATION_MIN_RATINGS = 5
 
 
-def _build_scoring_calibration(database_url, papers):
-	# Layer 1 of the feedback loop: inject similar rated papers as scorer calibration, but only once enough ratings exist for the signal to mean anything. Below the gate (or with no DB / no embeddings) the prompt stays byte-identical to the uncalibrated path.
-	if database_url is None or not papers:
+def _build_scoring_calibration(database_url, papers, no_fewshot=False):
+	# Layer 1 of the feedback loop: inject similar rated papers as scorer calibration, but only once enough ratings exist for the signal to mean anything. Below the gate (or with no DB / no embeddings / --no-fewshot) the prompt stays byte-identical to the uncalibrated path.
+	if no_fewshot or database_url is None or not papers:
 		return ''
 	with db.session(database_url) as conn:
 		if db.count_ratings(conn) < _CALIBRATION_MIN_RATINGS:
@@ -207,6 +225,11 @@ def _bootstrap(argv):
 	parser.add_argument('--dry-run', action='store_true', help='use fixtures and print HTML, no network or email')
 	parser.add_argument(
 		'--no-prefilter', action='store_true', help='ablation: score the full queue without the embedding pre-filter'
+	)
+	parser.add_argument(
+		'--no-fewshot',
+		action='store_true',
+		help='ablation: disable few-shot calibration and feedback injection regardless of gates',
 	)
 	global DRY_RUN, GEMINI_CALL_COUNT, GEMINI_CALL_BUDGET, _CFG
 	args = parser.parse_args(argv)
@@ -260,7 +283,12 @@ def main(argv=None):
 	else:
 		new_papers = _prefilter_scoring_queue(new_papers, database_url)
 
-	calibration_block = _build_scoring_calibration(database_url, new_papers)
+	calibration_block = _build_scoring_calibration(database_url, new_papers, args.no_fewshot)
+
+	# Render the first batch's scorer prompt up front so the exact text Gemini sees is logged even if scoring later halts.
+	scorer_prompt = (
+		scorer.render_scorer_prompt(new_papers[: _CFG.batch_size], _CFG, calibration_block) if new_papers else None
+	)
 
 	# Scoring runs without a DB connection held so Neon's pooler can auto-suspend during the Gemini calls.
 	enriched, responded, attempted = scorer.score_and_summarise(new_papers, _gemini_score, _CFG, calibration_block)
@@ -274,8 +302,12 @@ def main(argv=None):
 		_record_scoring_attempts(database_url, attempted, responded)
 
 	# Per-paper summarisation. Each call manages its own short DB sessions internally.
-	_summarise_kept_papers(enriched, database_url)
+	summariser_prompt = _summarise_kept_papers(enriched, database_url, args.no_fewshot)
 	_report_gemini_usage()
+
+	# Log the rendered prompts for inspection from the History page; either may be None when a stage had no papers.
+	if database_url is not None:
+		_record_run_prompts(database_url, run_id, scorer_prompt, summariser_prompt)
 
 	if not enriched:
 		print('No relevant papers, skipping email.')

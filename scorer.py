@@ -161,18 +161,22 @@ def _score_batches(papers, gemini_fn, cfg, calibration_block=''):
 	return enriched, responded, attempted, False
 
 
-def _score_chunk(papers, gemini_fn, cfg, calibration_block=''):
-	if not papers:
-		return [], set()
-
+def render_scorer_prompt(papers, cfg, calibration_block=''):
+	# Single source of truth for the scorer prompt so the run-row log captures exactly what _score_chunk sends Gemini.
 	paper_entries = []
 	for i, p in enumerate(papers):
 		title = p.get('title', '')
 		abstract = p.get('abstract') or 'No abstract available.'
 		paper_entries.append(f'[{i}] Title: {title}\nAbstract: {abstract}')
-
 	papers_block = '\n\n'.join(paper_entries)
-	prompt = calibration_block + SCORER_PROMPT.format(research_context=cfg.research_context, papers_block=papers_block)
+	return calibration_block + SCORER_PROMPT.format(research_context=cfg.research_context, papers_block=papers_block)
+
+
+def _score_chunk(papers, gemini_fn, cfg, calibration_block=''):
+	if not papers:
+		return [], set()
+
+	prompt = render_scorer_prompt(papers, cfg, calibration_block)
 
 	try:
 		response = gemini_fn(prompt)
