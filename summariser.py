@@ -20,6 +20,11 @@ MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
+# Some publishers 403 a bare requests download; a browser-like header pair gets the real PDF for several of them.
+_PDF_REQUEST_HEADERS = {
+	'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+	'Accept': 'application/pdf,*/*',
+}
 # Prompt uses `relevance_to_research` for clarity; DB column is `relevance`. Map at this boundary so downstream code aligns with the schema.
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
@@ -154,7 +159,7 @@ def _summarise_via_abstract(paper, gemini_fn, ctx, fewshot_block=''):
 
 
 def download_pdf(url, max_size_bytes):
-	with requests.get(url, stream=True, timeout=60) as r:
+	with requests.get(url, stream=True, timeout=60, headers=_PDF_REQUEST_HEADERS) as r:
 		r.raise_for_status()
 		declared = r.headers.get('Content-Length')
 		if declared and declared.isdigit() and int(declared) > max_size_bytes:
@@ -164,7 +169,11 @@ def download_pdf(url, max_size_bytes):
 			buffer.extend(chunk)
 			if len(buffer) > max_size_bytes:
 				raise ValueError(f'PDF stream exceeded cap {max_size_bytes}')
-		return bytes(buffer)
+	body = bytes(buffer)
+	# Many 'pdf' URLs are really DOI redirects to an HTML landing page; uploading that to Gemini 400s, so reject anything without the PDF magic header.
+	if not body.startswith(b'%PDF'):
+		raise ValueError(f'downloaded content is not a PDF (starts with {body[:8]!r})')
+	return body
 
 
 def parse_summary_response(response_text):

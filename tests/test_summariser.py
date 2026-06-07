@@ -467,9 +467,9 @@ def test_download_pdf_ignores_non_numeric_declared_content_length(mocker):
 	mock_response = mocker.MagicMock()
 	mock_response.__enter__.return_value = mock_response
 	mock_response.headers = {'Content-Length': 'unknown'}
-	mock_response.iter_content.return_value = iter([b'small'])
+	mock_response.iter_content.return_value = iter([b'%PDF-1.4 small'])
 	mocker.patch('summariser.requests.get', return_value=mock_response)
-	assert download_pdf(PDF_URL, max_size_bytes=100) == b'small'
+	assert download_pdf(PDF_URL, max_size_bytes=100) == b'%PDF-1.4 small'
 
 
 @responses.activate
@@ -477,6 +477,21 @@ def test_download_pdf_propagates_http_error():
 	responses.get(PDF_URL, json={'error': 'oops'}, status=500)
 	with pytest.raises(requests.HTTPError):
 		download_pdf(PDF_URL, max_size_bytes=1024)
+
+
+@responses.activate
+def test_download_pdf_rejects_html_masquerading_as_pdf():
+	# A DOI redirect to an HTML landing page returns 200 with HTML; it must not reach Gemini.
+	responses.get(PDF_URL, body=b'<!DOCTYPE html><html>not a pdf</html>')
+	with pytest.raises(ValueError, match='not a PDF'):
+		download_pdf(PDF_URL, max_size_bytes=1024)
+
+
+@responses.activate
+def test_download_pdf_sends_browser_user_agent():
+	responses.get(PDF_URL, body=b'%PDF-1.4 content')
+	download_pdf(PDF_URL, max_size_bytes=1024)
+	assert 'Mozilla' in responses.calls[0].request.headers['User-Agent']
 
 
 # -- summarise_paper: PDF path integration --
