@@ -1091,8 +1091,8 @@ def test_list_runs_returns_rows_ordered_by_started_at_desc(mock_conn):
 	from datetime import datetime
 
 	_cursor(mock_conn).fetchall.return_value = [
-		(2, datetime(2026, 5, 2), datetime(2026, 5, 2), 50, 5, 8, 0),
-		(1, datetime(2026, 5, 1), datetime(2026, 5, 1), 40, 3, 8, 1),
+		(2, datetime(2026, 5, 2), datetime(2026, 5, 2), 50, 5, 8, 0, 'S2', 'M2'),
+		(1, datetime(2026, 5, 1), datetime(2026, 5, 1), 40, 3, 8, 1, None, None),
 	]
 	result = db.list_runs(mock_conn, limit=10)
 	call = _cursor(mock_conn).execute.call_args
@@ -1101,7 +1101,10 @@ def test_list_runs_returns_rows_ordered_by_started_at_desc(mock_conn):
 	assert len(result) == 2
 	assert result[0]['id'] == 2
 	assert result[0]['papers_kept'] == 5
+	assert result[0]['scorer_prompt'] == 'S2'
+	assert result[0]['summariser_prompt'] == 'M2'
 	assert result[1]['queries_errored'] == 1
+	assert result[1]['scorer_prompt'] is None
 
 
 def test_list_runs_propagates_database_error(mock_conn):

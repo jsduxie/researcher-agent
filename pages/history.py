@@ -104,6 +104,16 @@ def _render_run_papers(papers):
 		st.markdown(f'<div class="history-paper-meta">{sep.join(meta_parts)}</div>', unsafe_allow_html=True)
 
 
+def _render_run_prompts(run):
+	# Logged prompts can carry upstream paper text, but st.code renders verbatim and never as HTML, so no escaping is needed here unlike the unsafe_allow_html blocks above.
+	for key, label_key in (('scorer_prompt', 'scorer_prompt_label'), ('summariser_prompt', 'summariser_prompt_label')):
+		prompt = run.get(key)
+		if not prompt:
+			continue
+		with st.expander(COPY['history'][label_key], expanded=False):
+			st.code(prompt)
+
+
 def main():
 	st.set_page_config(page_title=COPY['history']['page_title'], layout='wide', initial_sidebar_state='expanded')
 	_inject_styles()
@@ -121,6 +131,7 @@ def main():
 		with st.expander(_run_header(run), expanded=False):
 			papers = db.list_papers_for_run(conn, run['id'])
 			_render_run_papers(papers)
+			_render_run_prompts(run)
 
 
 main()
