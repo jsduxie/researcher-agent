@@ -1,6 +1,6 @@
 FEEDBACK FROM SIMILAR PAPERS:
-The student reviewed summaries of similar papers. Match the fields they rated highly and avoid the patterns they corrected.
-Fields they were happy with:
+The student reviewed summaries of similar papers. Use the strong examples as a model and avoid the patterns they corrected.
+Strong examples to emulate:
 {good}
-Fields they corrected (do not repeat these mistakes):
+Corrections to avoid:
 {bad}

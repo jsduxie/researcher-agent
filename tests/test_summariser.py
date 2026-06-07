@@ -760,23 +760,22 @@ def test_build_fewshot_block_renders_good_fields_rated_four_or_more():
 	block = build_fewshot_block(papers, _TEST_CFG)
 	assert 'methodology' in block
 	assert 'findings' in block
-	assert 'happy with' in block
+	assert 'Strong examples to emulate' in block
 
 
-def test_build_fewshot_block_carries_correction_on_high_rated_field():
-	# The "why 4 not 5" nuance: a high rating with a correction renders the note inline so Gemini learns the refinement.
+def test_build_fewshot_block_carries_note_on_high_rated_field():
+	# A note on a good field (praise or a "why 4 not 5" refinement) renders inline as a positive example.
 	papers = [_feedback_paper(methodology={'rating': 4, 'correction': 'could name the dataset'})]
 	block = build_fewshot_block(papers, _TEST_CFG)
 	assert 'methodology' in block
 	assert 'could name the dataset' in block
-	assert 'happy with' in block
+	assert 'Strong examples to emulate' in block
 
 
-def test_build_fewshot_block_high_rated_field_without_correction_has_no_note():
+def test_build_fewshot_block_high_rated_field_without_note_uses_plain_template():
 	papers = [_feedback_paper(methodology={'rating': 5, 'correction': None})]
 	block = build_fewshot_block(papers, _TEST_CFG)
-	assert 'methodology' in block
-	assert 'to be perfect' not in block
+	assert 'a good example to follow' in block
 
 
 def test_build_fewshot_block_renders_bad_fields_with_correction_text():
@@ -784,12 +783,20 @@ def test_build_fewshot_block_renders_bad_fields_with_correction_text():
 	block = build_fewshot_block(papers, _TEST_CFG)
 	assert 'limitations' in block
 	assert 'should mention sample size' in block
-	assert 'corrected' in block
+	assert 'Corrections to avoid' in block
 
 
-def test_build_fewshot_block_excludes_middling_ratings():
-	# Rating 3 is neither a good-shape example (>=4) nor a correction to avoid (<=2).
-	papers = [_feedback_paper(methodology={'rating': 3, 'correction': 'ignored'})]
+def test_build_fewshot_block_includes_mid_rated_field_with_correction():
+	# A rating-3 field below the good cutoff still injects as a correction to avoid when it carries a fix.
+	papers = [_feedback_paper(methodology={'rating': 3, 'correction': 'should name the baseline'})]
+	block = build_fewshot_block(papers, _TEST_CFG)
+	assert 'should name the baseline' in block
+	assert 'Corrections to avoid' in block
+
+
+def test_build_fewshot_block_excludes_mid_rated_field_without_correction():
+	# A middling rating with no correction is neither an example to emulate nor a pattern to avoid.
+	papers = [_feedback_paper(methodology={'rating': 3, 'correction': None})]
 	assert build_fewshot_block(papers, _TEST_CFG) == ''
 
 

@@ -88,7 +88,7 @@ def _build_fewshot_block(paper_id, ctx):
 
 
 def build_fewshot_block(feedback_papers, cfg):
-	# Fields at or above the good cutoff become shape examples, those at or below the bad cutoff become corrections to avoid.
+	# Fields at or above the good cutoff become examples to emulate; any field below it carrying a correction becomes a pattern to avoid.
 	good_lines = []
 	bad_lines = []
 	for paper in feedback_papers:
@@ -99,10 +99,10 @@ def build_fewshot_block(feedback_papers, cfg):
 				continue
 			correction = entry.get('correction')
 			if rating >= cfg.fewshot_good_rating:
-				# A correction on a high rating is the "why 4 not 5" nuance; carry it so Gemini learns the small refinement too.
+				# A note on a good field explains why it works (or the small refinement for a 4); carry it so Gemini learns from positive examples too.
 				template = SUMMARISER_FEWSHOT_GOOD_NOTE if correction else SUMMARISER_FEWSHOT_GOOD
 				good_lines.append(template.format(field=field, title=title, correction=correction).strip())
-			elif rating <= cfg.fewshot_bad_rating and correction:
+			elif correction:
 				bad_lines.append(SUMMARISER_FEWSHOT_BAD.format(field=field, title=title, correction=correction).strip())
 	if not good_lines and not bad_lines:
 		return ''
