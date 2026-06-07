@@ -1,1 +1,1 @@
-- {field}: rated well on "{title}"
+- {field}: a good example to follow on "{title}"

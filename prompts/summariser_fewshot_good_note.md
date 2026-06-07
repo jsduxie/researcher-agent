@@ -1,1 +1,1 @@
-- {field}: rated well on "{title}", but to be perfect: {correction}
+- {field} on "{title}": {correction}
