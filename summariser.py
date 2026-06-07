@@ -31,6 +31,10 @@ class SummariserContext:
 	database_url: str | None = None
 	api_key: str | None = None
 	on_gemini_call: Callable | None = None
+	# Fires with each rendered summariser prompt so the caller can log a representative one to the run row.
+	on_prompt: Callable | None = None
+	# False disables few-shot regardless of the feedback gate; the --no-fewshot ablation path sets this.
+	fewshot_enabled: bool = True
 
 
 def summarise_paper(paper, gemini_fn, ctx):
@@ -68,7 +72,7 @@ def summarise_paper(paper, gemini_fn, ctx):
 
 def _build_fewshot_block(paper_id, ctx):
 	# Gate, embedding load and neighbour retrieval all happen in one short session; returns '' (prompt stays byte-identical) below the gate, with no DB, or when this paper has no embedding to rank by.
-	if not ctx.database_url or not paper_id:
+	if not ctx.fewshot_enabled or not ctx.database_url or not paper_id:
 		return ''
 	with db.session(ctx.database_url) as conn:
 		if db.count_summary_feedback(conn) < _FEWSHOT_MIN_FEEDBACK:
@@ -114,6 +118,8 @@ def _summarise_via_pdf(title, pdf_url, ctx, fewshot_block=''):
 		prompt = fewshot_block + SUMMARISER_PROMPT.format(
 			research_context=ctx.cfg.research_context, source_material='See the attached PDF.'
 		)
+		if ctx.on_prompt:
+			ctx.on_prompt(prompt)
 		response = generate_with_file(prompt, file_uri, ctx.api_key, ctx.cfg, on_attempt=ctx.on_gemini_call)
 		return parse_summary_response(response)
 	except (GeminiQuotaExhausted, GeminiBudgetExhausted):
@@ -134,6 +140,8 @@ def _summarise_via_abstract(paper, gemini_fn, ctx, fewshot_block=''):
 	prompt = fewshot_block + SUMMARISER_PROMPT.format(
 		research_context=ctx.cfg.research_context, source_material=source_material
 	)
+	if ctx.on_prompt:
+		ctx.on_prompt(prompt)
 	try:
 		response = gemini_fn(prompt)
 		return parse_summary_response(response)

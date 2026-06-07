@@ -44,6 +44,7 @@ def mock_db(mocker):
 		'similar_rated_papers': mocker.patch('main.db.similar_rated_papers', return_value=[]),
 		'mark_scoring_results': mocker.patch('main.db.mark_scoring_results'),
 		'finish_run': mocker.patch('main.db.finish_run'),
+		'record_run_prompts': mocker.patch('main.db.record_run_prompts'),
 	}
 
 
@@ -306,6 +307,40 @@ def test_calibration_skipped_on_no_prefilter_path_without_embeddings(mock_db, mo
 	main.main(['--no-prefilter'])
 	assert mock_io['score'].call_args.args[3] == ''
 	mock_db['similar_rated_papers'].assert_not_called()
+
+
+def test_no_fewshot_flag_keeps_calibration_block_empty_despite_enough_ratings(mock_db, mock_io):
+	# Gate would pass (5 ratings) but --no-fewshot disables calibration before the gate is ever consulted.
+	mock_db['count_ratings'].return_value = 5
+	mock_db['similar_rated_papers'].return_value = [
+		{'paper_id': 'r1', 'title': 'T', 'abstract': 'a', 'latest_rating': 5}
+	]
+	main.main(['--no-fewshot'])
+	assert mock_io['score'].call_args.args[3] == ''
+	mock_db['similar_rated_papers'].assert_not_called()
+
+
+def test_no_fewshot_flag_disables_summariser_feedback_injection(mock_db, mock_io):
+	main.main(['--no-fewshot'])
+	ctx = mock_io['summarise'].call_args.args[2]
+	assert ctx.fewshot_enabled is False
+
+
+def test_live_run_logs_rendered_prompts_to_the_run_row(mock_db, mock_io):
+	main.main([])
+	call = mock_db['record_run_prompts'].call_args
+	assert call.args[1] == 42
+	scorer_prompt, summariser_prompt = call.args[2], call.args[3]
+	assert _TEST_CFG.research_context in scorer_prompt
+	# summarise_paper is mocked here so it never fires on_prompt; the run row records None for the representative summariser prompt.
+	assert summariser_prompt is None
+
+
+def test_live_run_logs_none_scorer_prompt_when_nothing_needs_scoring(mock_db, mock_io):
+	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
+	mock_io['score'].return_value = ([], set(), set())
+	main.main([])
+	assert mock_db['record_run_prompts'].call_args.args[2] is None
 
 
 def test_live_run_finishes_run_and_skips_email_when_no_papers_kept(mock_db, mock_io):
@@ -669,9 +704,9 @@ def test_live_run_resets_gemini_call_count_between_runs(mock_db, mock_io):
 
 
 def test_main_opens_a_session_per_pipeline_boundary(mock_db, mock_io):
-	# Phase D sessions are owned by summariser.summarise_paper (mocked here); main opens config-load + A (upserts) + B (embedding store) + calibration gate + C (mark) + E (finish) = 6.
+	# Phase D sessions are owned by summariser.summarise_paper (mocked here); main opens config-load + A (upserts) + B (embedding store) + calibration gate + C (mark) + prompt-log + E (finish) = 7.
 	main.main([])
-	assert mock_db['session'].call_count == 6
+	assert mock_db['session'].call_count == 7
 
 
 def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io):
@@ -679,8 +714,8 @@ def test_main_skips_phase_c_session_when_nothing_needs_scoring(mock_db, mock_io)
 	mock_db['needs_scoring'].side_effect = lambda conn, ids: set()
 	mock_io['score'].return_value = ([], set(), set())
 	main.main([])
-	# 1 (config-load) + 1 (A) + 0 (C) + 1 (E) = 3.
-	assert mock_db['session'].call_count == 3
+	# 1 (config-load) + 1 (A) + 0 (C) + 1 (prompt-log) + 1 (E) = 4.
+	assert mock_db['session'].call_count == 4
 
 
 def test_no_db_session_is_open_during_scoring(mock_db, mock_io):

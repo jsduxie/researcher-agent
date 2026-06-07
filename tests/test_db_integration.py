@@ -789,6 +789,32 @@ def test_list_runs_respects_limit(conn):
 	assert len(db.list_runs(conn, limit=3)) == 3
 
 
+# -- record_run_prompts --
+
+
+def _read_run_prompts(conn, run_id):
+	with conn.cursor() as cur:
+		cur.execute('SELECT scorer_prompt, summariser_prompt FROM runs WHERE id = %s', (run_id,))
+		return cur.fetchone()
+
+
+def test_run_prompt_columns_default_null(conn):
+	run_id = db.start_run(conn, papers_fetched=1)
+	assert _read_run_prompts(conn, run_id) == (None, None)
+
+
+def test_record_run_prompts_persists_both_prompts(conn):
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_prompts(conn, run_id, scorer_prompt='SCORER TEXT', summariser_prompt='SUMM TEXT')
+	assert _read_run_prompts(conn, run_id) == ('SCORER TEXT', 'SUMM TEXT')
+
+
+def test_record_run_prompts_persists_null_when_a_stage_had_no_papers(conn):
+	run_id = db.start_run(conn, papers_fetched=1)
+	db.record_run_prompts(conn, run_id, scorer_prompt='SCORER TEXT', summariser_prompt=None)
+	assert _read_run_prompts(conn, run_id) == ('SCORER TEXT', None)
+
+
 # -- runs_papers / list_papers_for_run --
 
 

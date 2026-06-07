@@ -89,6 +89,13 @@ def test_init_schema_includes_idempotent_migration_for_runs_query_columns(mock_c
 	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored' in executed_sql
 
 
+def test_init_schema_includes_idempotent_migration_for_runs_prompt_columns(mock_conn):
+	db.init_schema(mock_conn)
+	executed_sql = _cursor(mock_conn).execute.call_args.args[0]
+	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS scorer_prompt TEXT' in executed_sql
+	assert 'ALTER TABLE runs ADD COLUMN IF NOT EXISTS summariser_prompt TEXT' in executed_sql
+
+
 def test_init_schema_includes_summary_feedback_thumbs_to_rating_migration(mock_conn):
 	db.init_schema(mock_conn)
 	executed_sql = _cursor(mock_conn).execute.call_args.args[0]
@@ -257,6 +264,29 @@ def test_finish_run_records_query_outcomes(mock_conn):
 	assert 'queries_attempted = %s' in call.args[0]
 	assert 'queries_errored = %s' in call.args[0]
 	assert call.args[1] == (3, 8, 2, 42)
+
+
+# -- record_run_prompts --
+
+
+def test_record_run_prompts_updates_both_columns(mock_conn):
+	db.record_run_prompts(mock_conn, run_id=42, scorer_prompt='S', summariser_prompt='M')
+	call = _cursor(mock_conn).execute.call_args
+	assert 'UPDATE runs' in call.args[0]
+	assert 'scorer_prompt = %s' in call.args[0]
+	assert 'summariser_prompt = %s' in call.args[0]
+	assert call.args[1] == ('S', 'M', 42)
+
+
+def test_record_run_prompts_accepts_none_for_either_prompt(mock_conn):
+	db.record_run_prompts(mock_conn, run_id=7, scorer_prompt=None, summariser_prompt=None)
+	assert _cursor(mock_conn).execute.call_args.args[1] == (None, None, 7)
+
+
+def test_record_run_prompts_propagates_database_error(mock_conn):
+	_cursor(mock_conn).execute.side_effect = RuntimeError('prompts boom')
+	with pytest.raises(RuntimeError, match='prompts boom'):
+		db.record_run_prompts(mock_conn, run_id=1, scorer_prompt='S', summariser_prompt='M')
 
 
 # -- error propagation: db.py never swallows database errors --

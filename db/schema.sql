@@ -50,12 +50,18 @@ CREATE TABLE IF NOT EXISTS runs (
 	papers_fetched INTEGER NOT NULL DEFAULT 0,
 	papers_kept INTEGER,
 	queries_attempted INTEGER,
-	queries_errored INTEGER
+	queries_errored INTEGER,
+	scorer_prompt TEXT,
+	summariser_prompt TEXT
 );
 
 -- Idempotent migration for databases created before these columns existed.
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_attempted INTEGER;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS queries_errored INTEGER;
+
+-- Rendered prompts logged for few-shot inspection; one representative summariser prompt per run is enough.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS scorer_prompt TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS summariser_prompt TEXT;
 
 CREATE TABLE IF NOT EXISTS runs_papers (
 	run_id BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,

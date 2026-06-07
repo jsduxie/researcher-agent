@@ -43,3 +43,14 @@ def test_dry_run_skips_the_embedding_prefilter(mocker, capsys):
 	main.main(['--dry-run'])
 	embed.assert_not_called()
 	assert 'Pre-filter disabled' in capsys.readouterr().out
+
+
+def test_dry_run_no_fewshot_stays_offline_and_logs_no_prompts(mocker, capsys):
+	# --no-fewshot has no DB to log to in dry-run; the run still renders the digest from fixtures without touching the network.
+	mocker.patch.object(main, 'DRY_RUN', False)
+	mock_db_connect = mocker.patch('db.psycopg.connect')
+	record = mocker.patch('main.db.record_run_prompts')
+	main.main(['--dry-run', '--no-fewshot'])
+	mock_db_connect.assert_not_called()
+	record.assert_not_called()
+	assert '<!DOCTYPE html>' in capsys.readouterr().out
