@@ -763,6 +763,22 @@ def test_build_fewshot_block_renders_good_fields_rated_four_or_more():
 	assert 'happy with' in block
 
 
+def test_build_fewshot_block_carries_correction_on_high_rated_field():
+	# The "why 4 not 5" nuance: a high rating with a correction renders the note inline so Gemini learns the refinement.
+	papers = [_feedback_paper(methodology={'rating': 4, 'correction': 'could name the dataset'})]
+	block = build_fewshot_block(papers, _TEST_CFG)
+	assert 'methodology' in block
+	assert 'could name the dataset' in block
+	assert 'happy with' in block
+
+
+def test_build_fewshot_block_high_rated_field_without_correction_has_no_note():
+	papers = [_feedback_paper(methodology={'rating': 5, 'correction': None})]
+	block = build_fewshot_block(papers, _TEST_CFG)
+	assert 'methodology' in block
+	assert 'to be perfect' not in block
+
+
 def test_build_fewshot_block_renders_bad_fields_with_correction_text():
 	papers = [_feedback_paper(limitations={'rating': 2, 'correction': 'should mention sample size'})]
 	block = build_fewshot_block(papers, _TEST_CFG)
