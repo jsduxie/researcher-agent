@@ -18,6 +18,11 @@ def embed_texts(texts):
 	return [[float(v) for v in row] for row in _model().encode(list(texts), normalize_embeddings=True)]
 
 
+def paper_text(paper):
+	# The live pipeline and the backfill must build this identically or their vectors stop being comparable.
+	return f'{paper.get("title") or ""}\n\n{paper.get("abstract") or ""}'
+
+
 def similarity(a, b):
 	# Vectors arrive normalised, so the dot product is the cosine similarity.
 	return sum(x * y for x, y in zip(a, b, strict=True))

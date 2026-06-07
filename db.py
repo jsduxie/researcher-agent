@@ -240,9 +240,14 @@ def mark_scoring_results(conn, attempted, responded):
 # -- embeddings (pgvector; serialised as '[f1,f2,...]' text so no pgvector client package is needed) --
 
 
+def _serialise_vector(embedding):
+	# pgvector accepts the '[f1,f2,...]' text form, so no pgvector client package is needed.
+	return '[' + ','.join(str(v) for v in embedding) + ']'
+
+
 @database_reconnect
 def set_paper_embedding(conn, paper_id, embedding):
-	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	serialised = _serialise_vector(embedding)
 	with conn.cursor() as cur:
 		cur.execute('UPDATE papers SET embedding = %s::vector WHERE paper_id = %s', (serialised, paper_id))
 
@@ -326,7 +331,7 @@ _SIMILAR_RATED_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract', 'latest_rating
 
 def similar_rated_papers(conn, embedding, limit, exclude_id=None):
 	# IS DISTINCT FROM keeps a paper out of its own example set while a NULL exclude_id excludes nothing.
-	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	serialised = _serialise_vector(embedding)
 	with conn.cursor() as cur:
 		cur.execute(_SIMILAR_RATED_PAPERS_SQL, (exclude_id, serialised, limit))
 		rows = cur.fetchall()
@@ -351,7 +356,7 @@ _SIMILAR_FEEDBACK_PAPERS_COLUMNS = ('paper_id', 'title', 'abstract')
 
 def similar_feedback_papers(conn, embedding, limit, exclude_id=None):
 	# Attaches the latest per-field rating and correction so the summariser can pick good and bad shapes.
-	serialised = '[' + ','.join(str(v) for v in embedding) + ']'
+	serialised = _serialise_vector(embedding)
 	with conn.cursor() as cur:
 		cur.execute(_SIMILAR_FEEDBACK_PAPERS_SQL, (exclude_id, serialised, limit))
 		rows = cur.fetchall()

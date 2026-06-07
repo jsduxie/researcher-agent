@@ -44,6 +44,18 @@ def test_embed_texts_loads_the_pinned_model_once_across_calls(fake_sentence_tran
 	fake_sentence_transformers.SentenceTransformer.assert_called_once_with(embedder.EMBEDDING_MODEL)
 
 
+# -- paper_text --
+
+
+def test_paper_text_joins_title_and_abstract_with_blank_line():
+	assert embedder.paper_text({'title': 'T', 'abstract': 'A'}) == 'T\n\nA'
+
+
+def test_paper_text_falls_back_to_empty_strings_for_missing_or_none_fields():
+	assert embedder.paper_text({'title': None, 'abstract': None}) == '\n\n'
+	assert embedder.paper_text({}) == '\n\n'
+
+
 # -- similarity --
 
 

@@ -179,7 +179,7 @@ def _prefilter_scoring_queue(papers, database_url):
 	if not papers:
 		return papers
 	[context_vector] = embedder.embed_texts([_CFG.research_context])
-	texts = [f'{p.get("title") or ""}\n\n{p.get("abstract") or ""}' for p in papers]
+	texts = [embedder.paper_text(p) for p in papers]
 	vectors = embedder.embed_texts(texts)
 	if database_url is not None:
 		with db.session(database_url) as conn:
