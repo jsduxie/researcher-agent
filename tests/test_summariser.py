@@ -11,6 +11,7 @@ from summariser import (
 	build_fewshot_block,
 	download_pdf,
 	parse_summary_response,
+	resolve_pdf_url,
 	summarise_paper,
 )
 
@@ -218,6 +219,42 @@ def test_summarise_paper_records_pdf_source_when_pdf_path_succeeds(mocker, mock_
 	upsert.assert_called_once()
 	assert upsert.call_args.args[4] == 'pdf'
 	gemini_fn.assert_not_called()
+
+
+def test_summarise_paper_resolves_pdf_when_s2_has_none(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	resolve = mocker.patch('summariser.resolve_pdf_url', return_value='https://pub/x.pdf')
+	mocker.patch('summariser.download_pdf', return_value=b'%PDF-1.4')
+	mocker.patch('summariser.upload_pdf_to_gemini', return_value='files/abc')
+	mocker.patch('summariser.generate_with_file', return_value=_valid_response())
+	upsert = mocker.patch('summariser.db.upsert_summary')
+
+	_summarise(
+		{'paperId': 'p1', 'abstract': 'a', 'externalIds': {'DOI': '10.1/x'}},
+		mocker.Mock(),
+		database_url='postgresql://x',
+		api_key='fake-key',
+	)
+
+	resolve.assert_called_once()
+	assert upsert.call_args.args[4] == 'pdf'
+
+
+def test_summarise_paper_falls_back_to_abstract_when_resolution_fails(mocker):
+	mocker.patch('summariser.db.get_summary', return_value=None)
+	resolve = mocker.patch('summariser.resolve_pdf_url', return_value=None)
+	upsert = mocker.patch('summariser.db.upsert_summary')
+	gemini_fn = mocker.Mock(return_value=_valid_response())
+
+	_summarise(
+		{'paperId': 'p1', 'abstract': 'a', 'externalIds': {'DOI': '10.1/x'}},
+		gemini_fn,
+		database_url='postgresql://x',
+		api_key='fake-key',
+	)
+
+	resolve.assert_called_once()
+	assert upsert.call_args.args[4] == 'abstract'
 
 
 def test_summarise_paper_does_not_persist_when_conn_is_none(mocker):
@@ -513,6 +550,68 @@ def test_download_pdf_sends_browser_user_agent():
 	responses.get(PDF_URL, body=b'%PDF-1.4 content')
 	download_pdf(PDF_URL, max_size_bytes=1024)
 	assert 'Mozilla' in responses.calls[0].request.headers['User-Agent']
+
+
+# -- resolve_pdf_url --
+
+
+_UNPAYWALL_URL = 'https://api.unpaywall.org/v2/10.1/x'
+
+
+def _paper_with_doi(doi='10.1/x'):
+	return {'externalIds': {'DOI': doi}}
+
+
+@responses.activate
+def test_resolve_pdf_url_returns_unpaywall_direct_pdf():
+	responses.get(
+		_UNPAYWALL_URL, json={'best_oa_location': {'url_for_pdf': 'https://pub/x.pdf', 'url': 'https://pub/x'}}
+	)
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') == 'https://pub/x.pdf'
+
+
+@responses.activate
+def test_resolve_pdf_url_scrapes_citation_pdf_url_when_no_direct_pdf():
+	responses.get(_UNPAYWALL_URL, json={'best_oa_location': {'url_for_pdf': None, 'url': 'https://pub/landing'}})
+	responses.get(
+		'https://pub/landing',
+		body='<html><head><meta name="citation_pdf_url" content="https://pub/real.pdf"></head></html>',
+	)
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') == 'https://pub/real.pdf'
+
+
+@responses.activate
+def test_resolve_pdf_url_handles_reversed_meta_attribute_order():
+	responses.get(_UNPAYWALL_URL, json={'best_oa_location': {'url': 'https://pub/landing'}})
+	responses.get('https://pub/landing', body='<meta content="https://pub/real.pdf" name="citation_pdf_url">')
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') == 'https://pub/real.pdf'
+
+
+def test_resolve_pdf_url_returns_none_without_doi():
+	assert resolve_pdf_url({'externalIds': {}}, 'a@b.com') is None
+
+
+def test_resolve_pdf_url_returns_none_without_email():
+	assert resolve_pdf_url(_paper_with_doi(), '') is None
+
+
+@responses.activate
+def test_resolve_pdf_url_returns_none_when_no_oa_location():
+	responses.get(_UNPAYWALL_URL, json={'best_oa_location': None})
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') is None
+
+
+@responses.activate
+def test_resolve_pdf_url_returns_none_when_unpaywall_errors():
+	responses.get(_UNPAYWALL_URL, json={'error': 'x'}, status=404)
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') is None
+
+
+@responses.activate
+def test_resolve_pdf_url_returns_none_when_landing_has_no_meta():
+	responses.get(_UNPAYWALL_URL, json={'best_oa_location': {'url': 'https://pub/landing'}})
+	responses.get('https://pub/landing', body='<html>no meta here</html>')
+	assert resolve_pdf_url(_paper_with_doi(), 'a@b.com') is None
 
 
 # -- summarise_paper: PDF path integration --

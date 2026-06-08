@@ -25,6 +25,9 @@ _PDF_REQUEST_HEADERS = {
 	'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
 	'Accept': 'application/pdf,*/*',
 }
+_UNPAYWALL_BASE = 'https://api.unpaywall.org/v2'
+_CITATION_PDF_TAG_RE = re.compile(r'<meta[^>]*citation_pdf_url[^>]*>', re.IGNORECASE)
+_CONTENT_ATTR_RE = re.compile(r'content=["\']([^"\']+)["\']', re.IGNORECASE)
 # Prompt uses `relevance_to_research` for clarity; DB column is `relevance`. Map at this boundary so downstream code aligns with the schema.
 _PROMPT_KEY_BY_COLUMN = {'relevance': 'relevance_to_research'}
 
@@ -60,6 +63,9 @@ def summarise_paper(paper, gemini_fn, ctx):
 	fields = None
 	source = None
 	pdf_url = (paper.get('openAccessPdf') or {}).get('url')
+	if not pdf_url and ctx.api_key:
+		# Semantic Scholar often omits the PDF; try to resolve an open-access one before settling for the abstract.
+		pdf_url = resolve_pdf_url(paper, ctx.cfg.unpaywall_email)
 	if pdf_url and ctx.api_key:
 		fields = _summarise_via_pdf(title, pdf_url, ctx, fewshot_block)
 		if fields is not None:
@@ -179,6 +185,46 @@ def download_pdf(url, max_size_bytes):
 	if not body.startswith(b'%PDF'):
 		raise ValueError(f'downloaded content is not a PDF (starts with {body[:8]!r})')
 	return body
+
+
+def resolve_pdf_url(paper, email):
+	# Finds an open-access PDF that Semantic Scholar did not supply, via Unpaywall then the landing page's citation_pdf_url meta tag.
+	doi = (paper.get('externalIds') or {}).get('DOI')
+	if not doi or not email:
+		return None
+	location = _unpaywall_oa_location(doi, email)
+	if not location:
+		return None
+	direct = location.get('url_for_pdf')
+	if direct:
+		return direct
+	landing = location.get('url')
+	return _scrape_citation_pdf_url(landing) if landing else None
+
+
+def _unpaywall_oa_location(doi, email):
+	try:
+		r = requests.get(f'{_UNPAYWALL_BASE}/{doi}', params={'email': email}, timeout=30)
+		r.raise_for_status()
+		return r.json().get('best_oa_location')
+	except Exception as e:
+		print(f'Unpaywall lookup failed for {doi}: {e}')
+		return None
+
+
+def _scrape_citation_pdf_url(url):
+	# Publishers expose the real PDF via a <meta name="citation_pdf_url"> tag; attribute order varies, so find the tag then its content.
+	try:
+		r = requests.get(url, headers=_PDF_REQUEST_HEADERS, timeout=30)
+		r.raise_for_status()
+	except Exception as e:
+		print(f'citation_pdf_url scrape failed for {url}: {e}')
+		return None
+	tag = _CITATION_PDF_TAG_RE.search(r.text)
+	if not tag:
+		return None
+	content = _CONTENT_ATTR_RE.search(tag.group(0))
+	return content.group(1) if content else None
 
 
 def parse_summary_response(response_text):
