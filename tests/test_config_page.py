@@ -87,6 +87,7 @@ def test_form_prepopulates_context_numbers_and_model(stub_db):
 	assert at.number_input(key='cfg_fewshot_good_rating').value == _SEED['fewshot_good_rating']
 	assert at.number_input(key='cfg_calibration_max_examples').value == _SEED['calibration_max_examples']
 	assert at.text_input(key='cfg_model').value == _SEED['gemini_model']
+	assert at.text_input(key='cfg_unpaywall_email').value == _SEED['unpaywall_email']
 
 
 def test_form_does_not_expose_infrastructure_keys(stub_db):
@@ -106,6 +107,7 @@ def test_form_does_not_expose_infrastructure_keys(stub_db):
 		'cfg_fewshot_good_rating',
 		'cfg_calibration_max_examples',
 		'cfg_model',
+		'cfg_unpaywall_email',
 	}
 
 

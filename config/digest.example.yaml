@@ -23,3 +23,4 @@ fewshot_min_feedback: 5
 fewshot_good_rating: 4
 fewshot_neighbours: 3
 calibration_max_examples: 8
+unpaywall_email: you@example.com

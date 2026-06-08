@@ -94,6 +94,9 @@ def _form_values(cfg):
 		'cfg_calibration_max_examples',
 	)
 	model = st.text_input(COPY['config']['model_label'], value=cfg.gemini_model, key='cfg_model')
+	unpaywall_email = st.text_input(
+		COPY['config']['unpaywall_email_label'], value=cfg.unpaywall_email, key='cfg_unpaywall_email'
+	)
 	return {
 		'search_queries': [q.strip() for q in queries_text.splitlines() if q.strip()],
 		'research_context': context,
@@ -107,6 +110,7 @@ def _form_values(cfg):
 		'fewshot_good_rating': fewshot_good_rating,
 		'calibration_max_examples': calibration_max_examples,
 		'gemini_model': model.strip(),
+		'unpaywall_email': unpaywall_email.strip(),
 	}
 
 
