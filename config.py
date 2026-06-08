@@ -30,6 +30,7 @@ DIGEST_KEYS = (
 	'fewshot_good_rating',
 	'fewshot_neighbours',
 	'calibration_max_examples',
+	'unpaywall_email',
 )
 
 
@@ -52,6 +53,7 @@ class Config:
 	fewshot_good_rating: int
 	fewshot_neighbours: int
 	calibration_max_examples: int
+	unpaywall_email: str
 
 
 def _load_prompt(name):

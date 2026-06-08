@@ -74,6 +74,7 @@ config:
   fewshot_good_rating_label: 'Good-shape rating cutoff'
   calibration_max_examples_label: 'Calibration max examples'
   model_label: 'Gemini model'
+  unpaywall_email_label: 'Unpaywall contact email'
   submit: 'Save configuration'
   saved: 'Configuration saved.'
   no_changes: 'No changes to save.'
