@@ -2,6 +2,7 @@ import html
 import os
 from pathlib import Path
 
+import html
 import streamlit as st
 import yaml
 from dotenv import load_dotenv
@@ -98,7 +99,7 @@ def _render_run_papers(papers):
 		)
 		meta_parts = [html.escape(_format_authors(paper.get('authors')))]
 		if paper.get('year'):
-			meta_parts.append(str(paper['year']))
+			meta_parts.append(html.escape(str(paper['year'])))
 		meta_parts.append(_format_rating(paper.get('latest_rating')))
 		# Flags abstract-only summaries so weaker entries are visible at a glance.
 		source = paper.get('summary_source')
