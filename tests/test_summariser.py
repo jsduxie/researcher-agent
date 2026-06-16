@@ -120,6 +120,15 @@ def test_parse_raises_on_malformed_json():
 	with pytest.raises(json.JSONDecodeError):
 		parse_summary_response('not valid')
 
+def test_parse_tolerates_invalid_escapes():
+	# Gemini may emit literal backslashes from paper source text
+	# that are not valid JSON escapes (e.g. \cite, \frac).
+	invalid = '{"methodology": "uses \\\\cite{key}", "findings": "\\\\frac{1}{2}", "relevance_to_research": "r", "limitations": "l"}'
+	result = parse_summary_response(invalid)
+	assert result['methodology'] == 'uses \\cite{key}'
+	assert result['findings'] == '\\frac{1}{2}'
+
+
 
 def test_parse_raises_when_response_is_a_list():
 	with pytest.raises(ValueError, match='Expected JSON object'):
