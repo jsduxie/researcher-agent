@@ -19,7 +19,7 @@ from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_fi
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
 def _fix_invalid_escapes(text):
     """Double-escape backslashes that aren't valid JSON escapes."""
-    valid_escapes = set('"\/bfnrtu')
+    valid_escapes = {34, 92, 47, 98, 102, 110, 114, 116, 117}
     result = list(text)
     i = 0
     while i < len(result):
