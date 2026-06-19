@@ -17,7 +17,7 @@ from config import (
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_file, upload_pdf_to_gemini
 
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
-_INVALID_ESCAPE_RE = re.compile(r'\(?!["\/bfnrtu])')
+_INVALID_ESCAPE_RE = re.compile(r'\[^"\/bfnrtu]')
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
