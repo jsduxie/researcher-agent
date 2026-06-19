@@ -73,7 +73,7 @@ SUMMARISER_FEWSHOT_GOOD = _load_prompt('summariser_fewshot_good')
 SUMMARISER_FEWSHOT_GOOD_NOTE = _load_prompt('summariser_fewshot_good_note')
 SUMMARISER_FEWSHOT_BAD = _load_prompt('summariser_fewshot_bad')
 
-_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True)
+_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), trim_blocks=True, lstrip_blocks=True, autoescape=True)
 _env.globals['S'] = S
 EMAIL_TEMPLATE = _env.get_template('email.html')
 
