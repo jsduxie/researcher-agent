@@ -229,21 +229,21 @@ def _scrape_citation_pdf_url(url):
 
 
 def parse_summary_response(response_text):
-    """Parse Gemini's JSON response, tolerating invalid escapes."""
-    cleaned = _FENCE_RE.sub('', response_text).strip()
-    # Double-escape backslashes that are not valid JSON escapes
-    # (e.g. \cite, rac from paper source text)
-    cleaned = _INVALID_ESCAPE_RE.sub(r'\\', cleaned)
-    parsed = json.loads(cleaned)
-    if not isinstance(parsed, dict):
-        raise ValueError(f'Expected JSON object, got {type(parsed).__name__}')
+	"""Parse Gemini's JSON response, tolerating invalid escapes."""
+	cleaned = _FENCE_RE.sub('', response_text).strip()
+	# Double-escape backslashes that are not valid JSON escapes
+	# (e.g. \cite, rac from paper source text)
+	cleaned = _INVALID_ESCAPE_RE.sub(r'\\', cleaned)
+	parsed = json.loads(cleaned)
+	if not isinstance(parsed, dict):
+		raise ValueError(f'Expected JSON object, got {type(parsed).__name__}')
 
-    fields = {}
-    for column in _FIELDS:
-        prompt_key = _PROMPT_KEY_BY_COLUMN.get(column, column)
-        value = parsed.get(prompt_key)
-        if not isinstance(value, str) or not value.strip():
-            fields[column] = MISSING_FIELD_PLACEHOLDER
-        else:
-            fields[column] = value.strip()
-    return fields
+	fields = {}
+	for column in _FIELDS:
+		prompt_key = _PROMPT_KEY_BY_COLUMN.get(column, column)
+		value = parsed.get(prompt_key)
+		if not isinstance(value, str) or not value.strip():
+			fields[column] = MISSING_FIELD_PLACEHOLDER
+		else:
+			fields[column] = value.strip()
+	return fields
