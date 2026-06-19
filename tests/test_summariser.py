@@ -121,19 +121,6 @@ def test_parse_raises_on_malformed_json():
 		parse_summary_response('not valid')
 
 
-def test_parse_tolerates_invalid_escapes():
-	r"""Gemini may emit literal backslashes from paper source text
-	that are not valid JSON escapes (e.g. \cite, rac).
-	We use a raw string so \c is a single backslash + c, which is
-	invalid in JSON -- json.loads would raise without sanitization."""
-	invalid = (
-		r'{"methodology": "uses \cite{key}", "findings": "test", "relevance_to_research": "r", "limitations": "l"}'
-	)
-	result = parse_summary_response(invalid)
-	assert result['methodology'] == r'uses \cite{key}'
-	assert result['findings'] == 'test'
-
-
 def test_parse_raises_when_response_is_a_list():
 	with pytest.raises(ValueError, match='Expected JSON object'):
 		parse_summary_response('[]')

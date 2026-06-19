@@ -17,18 +17,6 @@ from config import (
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_file, upload_pdf_to_gemini
 
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
-def _fix_invalid_escapes(text):
-    """Double-escape backslashes that aren't valid JSON escapes."""
-    valid_escapes = {34, 92, 47, 98, 102, 110, 114, 116, 117}
-    result = list(text)
-    i = 0
-    while i < len(result):
-        if result[i] == chr(92) and i + 1 < len(result) and result[i+1] not in valid_escapes:
-            result[i] = chr(92) + chr(92)
-            i += 2
-        else:
-            i += 1
-    return ''.join(result)
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
@@ -240,11 +228,7 @@ def _scrape_citation_pdf_url(url):
 
 
 def parse_summary_response(response_text):
-	"""Parse Gemini's JSON response, tolerating invalid escapes."""
 	cleaned = _FENCE_RE.sub('', response_text).strip()
-	# Double-escape backslashes that are not valid JSON escapes
-	# (e.g. \cite, rac from paper source text)
-	cleaned = _fix_invalid_escapes(cleaned)
 	parsed = json.loads(cleaned)
 	if not isinstance(parsed, dict):
 		raise ValueError(f'Expected JSON object, got {type(parsed).__name__}')
