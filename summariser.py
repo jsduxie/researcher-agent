@@ -17,18 +17,21 @@ from config import (
 from gemini import GeminiBudgetExhausted, GeminiQuotaExhausted, generate_with_file, upload_pdf_to_gemini
 
 MISSING_FIELD_PLACEHOLDER = 'Not available from this source.'
+
+
 def _fix_invalid_escapes(s):
-    BACKSLASH = 92
-    valid = {34, 92, 47, 98, 102, 110, 114, 116, 117}
-    result = list(s)
-    i = 0
-    while i < len(result):
-        if ord(result[i]) == BACKSLASH and i + 1 < len(result) and ord(result[i+1]) not in valid:
-            result.insert(i, chr(BACKSLASH))
-            i += 2
-        else:
-            i += 1
-    return ''.join(result)
+	BACKSLASH = 92
+	valid = {34, 92, 47, 98, 102, 110, 114, 116, 117}
+	result = list(s)
+	i = 0
+	while i < len(result):
+		if ord(result[i]) == BACKSLASH and i + 1 < len(result) and ord(result[i + 1]) not in valid:
+			result.insert(i, chr(BACKSLASH))
+			i += 2
+		else:
+			i += 1
+	return ''.join(result)
+
 
 _FENCE_RE = re.compile(r'```(?:json)?', re.IGNORECASE)
 _FIELDS = ('methodology', 'findings', 'relevance', 'limitations')
@@ -240,21 +243,21 @@ def _scrape_citation_pdf_url(url):
 
 
 def parse_summary_response(response_text):
-    """Parse Gemini's JSON response, tolerating invalid escapes."""
-    cleaned = _FENCE_RE.sub('', response_text).strip()
-    # Double-escape backslashes that are not valid JSON escapes
-    # (e.g. \cite, rac from paper source text)
-    cleaned = _fix_invalid_escapes(cleaned)
-    parsed = json.loads(cleaned)
-    if not isinstance(parsed, dict):
-        raise ValueError(f'Expected JSON object, got {type(parsed).__name__}')
+	"""Parse Gemini's JSON response, tolerating invalid escapes."""
+	cleaned = _FENCE_RE.sub('', response_text).strip()
+	# Double-escape backslashes that are not valid JSON escapes
+	# (e.g. \cite, rac from paper source text)
+	cleaned = _fix_invalid_escapes(cleaned)
+	parsed = json.loads(cleaned)
+	if not isinstance(parsed, dict):
+		raise ValueError(f'Expected JSON object, got {type(parsed).__name__}')
 
-    fields = {}
-    for column in _FIELDS:
-        prompt_key = _PROMPT_KEY_BY_COLUMN.get(column, column)
-        value = parsed.get(prompt_key)
-        if not isinstance(value, str) or not value.strip():
-            fields[column] = MISSING_FIELD_PLACEHOLDER
-        else:
-            fields[column] = value.strip()
-    return fields
+	fields = {}
+	for column in _FIELDS:
+		prompt_key = _PROMPT_KEY_BY_COLUMN.get(column, column)
+		value = parsed.get(prompt_key)
+		if not isinstance(value, str) or not value.strip():
+			fields[column] = MISSING_FIELD_PLACEHOLDER
+		else:
+			fields[column] = value.strip()
+	return fields
