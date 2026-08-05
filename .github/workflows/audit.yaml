@@ -1,0 +1,37 @@
+name: Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # monday 07:00 utc, catches advisories published while the repo is idle
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          # the runner image ships a setuptools that lags its own advisories; the repo does not pin it
+          pip install --upgrade pip setuptools
+          # CPU wheel first: the default Linux torch wheel bundles CUDA and is ~2GB.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install pip-audit
+
+      # audits the resolved environment, so transitives of the pinned packages are covered too.
+      # not --strict: the CPU torch wheel is 2.13.0+cpu, which has no PyPI release to look up.
+      - name: pip-audit
+        run: pip-audit
