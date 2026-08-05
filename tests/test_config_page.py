@@ -7,7 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 import config
 
-_APP_PATH = 'pages/config.py'
+_APP_PATH = Path(__file__).resolve().parents[1] / 'pages/config.py'
 _COPY = yaml.safe_load((Path(__file__).resolve().parents[1] / 'copy.yaml').read_text())
 _SEED = config.load_seed()
 
