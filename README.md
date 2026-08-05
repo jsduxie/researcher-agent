@@ -55,7 +55,7 @@ Each run is a single linear pass orchestrated by `main.py`:
 2. **Dedup** collapses papers seen across queries and drops any without a `paperId` (the primary key), since they cannot be persisted or deduplicated across runs.
 3. **Pre-filter** (`embedder.py`) embeds the research context and every candidate locally, ranks by cosine similarity, and passes only the top N to the scorer. Vectors are persisted to `pgvector` for later similarity retrieval.
 4. **Score** (`scorer.py`) sends batches to Gemini for a 0-10 relevance judgement. If enough ratings exist, a few-shot calibration block is built from similar rated papers and prepended to the prompt.
-5. **Summarise** (`summariser.py`) summarises each kept paper, uploading the PDF through Gemini's Files API where available and falling back to the abstract otherwise.
+5. **Summarise** (`summariser.py`) summarises each kept paper, uploading the PDF through Gemini's Files API where available and falling back to the abstract otherwise. Where Semantic Scholar supplies no open-access PDF, the DOI is looked up on Unpaywall and the landing page's `citation_pdf_url` meta tag is scraped as a second attempt, so more papers are summarised from full text. Downloads are rejected unless they carry the `%PDF` header, which keeps an HTML landing page from reaching Gemini.
 6. **Render and email** (`render.py`, `emailer.py`) build the HTML digest and send it over Gmail SMTP.
 
 Postgres (Neon) and the Streamlit dashboard sit to the side of the pipeline as stores rather than stages: the run writes papers, runs, vectors, prompts and results; the dashboard reads them back and writes ratings, which feed the next run's calibration.
@@ -93,13 +93,14 @@ Copy `.env.example` to `.env` for local use. Every variable except `DATABASE_URL
 
 ## Configuration
 
-Pipeline behaviour lives in the `app_config` table in Neon, edited from the dashboard's Configuration page. On a fresh database the table is seeded from `config/digest.example.yaml`; after that, the file is only an example and Neon is the source of truth. Gemini-facing keys:
+Pipeline behaviour lives in the `app_config` table in Neon, edited from the dashboard's Configuration page. On a fresh database the table is seeded from `config/digest.example.yaml`; after that, the file is only an example and Neon is the source of truth. The keys worth knowing about:
 
 | Key | Default | Purpose |
 |---|---|---|
 | `gemini_model` | `gemini-3.1-flash-lite` | Model used by scorer and summariser |
 | `gemini_base_url` | `https://generativelanguage.googleapis.com/v1beta` | Base URL for `generateContent` |
 | `gemini_upload_base_url` | `https://generativelanguage.googleapis.com/upload/v1beta` | Base URL for the Files API resumable upload |
+| `unpaywall_email` | `you@example.com` | Contact address Unpaywall requires on every query. Set this to a real address or PDF resolution is skipped |
 
 Swap the model by editing `gemini_model` on the Configuration page; the scorer and summariser pick it up on the next run with no code change.
 

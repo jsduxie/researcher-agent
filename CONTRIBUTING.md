@@ -117,7 +117,7 @@ Always eyeball the diff before committing a regenerated snapshot. The whole poin
 
 ## Pull request workflow
 
-1. Branch from `main` with a descriptive name, for example `fix/jinja2-autoescape` or `docs/readme-overview`.
+1. Branch from `main` as `<issue>-<type>-<description>`, for example `48-fix-jinja2-autoescape` or `49-docs-readme-overview`. The issue number first makes the branch and the discussion easy to line up.
 2. Keep the PR focused on one change. If you spot something unrelated, a separate PR is easier to review and merge.
 3. Make sure the full CI suite (lint, unit, integration, coverage gates) passes. The same commands are listed above so you can run them locally first.
 4. Open the PR against `main` with a short description of what changed and why. Link the issue it closes with `Fixes #NN`.
