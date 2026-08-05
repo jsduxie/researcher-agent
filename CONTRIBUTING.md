@@ -96,8 +96,8 @@ papers = json.loads((fixtures / 'enriched_papers.json').read_text())
 cfg = config.Config(**config.load_seed())
 
 with patch('render.datetime') as dt:
-    dt.now.return_value = datetime(2026, 1, 15)
-    (fixtures / 'email_snapshot.html').write_text(build_email(papers, cfg))
+	dt.now.return_value = datetime(2026, 1, 15)
+	(fixtures / 'email_snapshot.html').write_text(build_email(papers, cfg))
 ```
 
 Always eyeball the diff before committing a regenerated snapshot. The whole point of the test is to catch rendering changes you did not intend.
