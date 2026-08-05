@@ -5,7 +5,7 @@ import pytest
 import yaml
 from streamlit.testing.v1 import AppTest
 
-_APP_PATH = 'pages/history.py'
+_APP_PATH = Path(__file__).resolve().parents[1] / 'pages/history.py'
 _COPY = yaml.safe_load((Path(__file__).resolve().parents[1] / 'copy.yaml').read_text())
 
 
