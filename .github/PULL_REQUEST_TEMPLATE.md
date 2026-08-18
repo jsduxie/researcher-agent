@@ -12,4 +12,4 @@ Fixes #
 - [ ] New behaviour is covered by tests
 - [ ] If the email rendering changed, the snapshot fixture is regenerated and committed
 
-Thanks for contributing! Keeping a PR focused on one change makes it quicker to review.
+A pull request focused on one change is quicker to review.
